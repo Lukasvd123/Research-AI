@@ -5,8 +5,8 @@
         reverse_proxy host.containers.internal:8000
     }
 
-    # Frontend - strip /researchai prefix
-    handle_path /researchai/* {
+    # Frontend - keep /researchai prefix (Vite serves under base=/researchai/)
+    handle /researchai/* {
         reverse_proxy host.containers.internal:5173
     }
 
