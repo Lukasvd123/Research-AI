@@ -5,7 +5,7 @@ const App = () => {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>Fruit React App</h1>
+        <h1>Test React App</h1>
       </header>
       <main>
         <FruitList />
