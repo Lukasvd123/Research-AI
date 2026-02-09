@@ -45,6 +45,12 @@ set "RT="
 set "KEEP_ALIVE=0"
 set "STARTED_FRONTEND=0"
 set "STARTED_BACKEND=0"
+set "AUTO_RELOAD_BACKEND=0"
+set "AUTO_RELOAD_FRONTEND=0"
+
+:: Clean up stale watcher files from previous runs
+del "%LOGDIR%\.backend_watcher_active" >nul 2>&1
+del "%LOGDIR%\.frontend_watcher_active" >nul 2>&1
 
 call :log "=========================================="
 call :log "Research-AI Dev Launcher started"
@@ -348,6 +354,7 @@ if !errorlevel! neq 0 goto :backend_run_fail
 
 call :log_silent "Backend running on http://localhost:%BACKEND_PORT%"
 echo   [OK] Backend running on http://localhost:%BACKEND_PORT%
+copy nul "%LOGDIR%\.backend_last_start" >nul 2>&1
 goto :eof
 
 :backend_build_fail
@@ -387,6 +394,7 @@ if !errorlevel! neq 0 goto :frontend_run_fail
 
 call :log_silent "Frontend running on http://localhost:%FRONTEND_PORT%"
 echo   [OK] Frontend running on http://localhost:%FRONTEND_PORT%
+copy nul "%LOGDIR%\.frontend_last_start" >nul 2>&1
 goto :eof
 
 :frontend_build_fail
@@ -522,13 +530,103 @@ call :log_silent "Resume complete"
 goto :eof
 
 :: ============================================================================
+:: Auto-reload watchers — uses PowerShell background process + marker files
+:: ============================================================================
+
+:start_backend_watcher
+:: Create active marker (watcher runs while this file exists)
+copy nul "%LOGDIR%\.backend_watcher_active" >nul 2>&1
+:: Ensure reference file exists
+if not exist "%LOGDIR%\.backend_last_start" copy nul "%LOGDIR%\.backend_last_start" >nul 2>&1
+:: Write PowerShell watcher script
+echo $ErrorActionPreference = 'SilentlyContinue' > "%LOGDIR%\_watch_backend.ps1"
+echo $active = '%LOGDIR%\.backend_watcher_active' >> "%LOGDIR%\_watch_backend.ps1"
+echo $ref = '%LOGDIR%\.backend_last_start' >> "%LOGDIR%\_watch_backend.ps1"
+echo $dir = '%SCRIPT_DIR%\backend' >> "%LOGDIR%\_watch_backend.ps1"
+echo $rt = '%RT%' >> "%LOGDIR%\_watch_backend.ps1"
+echo $ctr = '%BACKEND_CTR%' >> "%LOGDIR%\_watch_backend.ps1"
+echo while (Test-Path $active) { >> "%LOGDIR%\_watch_backend.ps1"
+echo   Start-Sleep -Seconds 3 >> "%LOGDIR%\_watch_backend.ps1"
+echo   if (Test-Path $ref) { >> "%LOGDIR%\_watch_backend.ps1"
+echo     $mt = (Get-Item $ref).LastWriteTime >> "%LOGDIR%\_watch_backend.ps1"
+echo     $c = Get-ChildItem $dir -Recurse -File -Include '*.py' ^| Where-Object { $_.LastWriteTime -gt $mt } ^| Select-Object -First 1 >> "%LOGDIR%\_watch_backend.ps1"
+echo     if ($c) { >> "%LOGDIR%\_watch_backend.ps1"
+echo       Write-Host '  [Auto-reload] Backend file changed, restarting...' >> "%LOGDIR%\_watch_backend.ps1"
+echo       ^& $rt stop $ctr >> "%LOGDIR%\_watch_backend.ps1"
+echo       Start-Sleep -Seconds 2 >> "%LOGDIR%\_watch_backend.ps1"
+echo       ^& $rt start $ctr >> "%LOGDIR%\_watch_backend.ps1"
+echo       (Get-Item $ref).LastWriteTime = Get-Date >> "%LOGDIR%\_watch_backend.ps1"
+echo     } >> "%LOGDIR%\_watch_backend.ps1"
+echo   } >> "%LOGDIR%\_watch_backend.ps1"
+echo } >> "%LOGDIR%\_watch_backend.ps1"
+start /b powershell -NoProfile -ExecutionPolicy Bypass -File "%LOGDIR%\_watch_backend.ps1"
+call :log_silent "Backend auto-reload watcher started"
+goto :eof
+
+:stop_backend_watcher
+del "%LOGDIR%\.backend_watcher_active" >nul 2>&1
+call :log_silent "Backend auto-reload watcher stopped"
+goto :eof
+
+:start_frontend_watcher
+copy nul "%LOGDIR%\.frontend_watcher_active" >nul 2>&1
+if not exist "%LOGDIR%\.frontend_last_start" copy nul "%LOGDIR%\.frontend_last_start" >nul 2>&1
+echo $ErrorActionPreference = 'SilentlyContinue' > "%LOGDIR%\_watch_frontend.ps1"
+echo $active = '%LOGDIR%\.frontend_watcher_active' >> "%LOGDIR%\_watch_frontend.ps1"
+echo $ref = '%LOGDIR%\.frontend_last_start' >> "%LOGDIR%\_watch_frontend.ps1"
+echo $dir = '%SCRIPT_DIR%\frontend' >> "%LOGDIR%\_watch_frontend.ps1"
+echo $rt = '%RT%' >> "%LOGDIR%\_watch_frontend.ps1"
+echo $ctr = '%FRONTEND_CTR%' >> "%LOGDIR%\_watch_frontend.ps1"
+echo while (Test-Path $active) { >> "%LOGDIR%\_watch_frontend.ps1"
+echo   Start-Sleep -Seconds 3 >> "%LOGDIR%\_watch_frontend.ps1"
+echo   if (Test-Path $ref) { >> "%LOGDIR%\_watch_frontend.ps1"
+echo     $mt = (Get-Item $ref).LastWriteTime >> "%LOGDIR%\_watch_frontend.ps1"
+echo     $c = Get-ChildItem $dir -Recurse -File -Include '*.ts','*.tsx','*.css','*.html','*.json' ^| Where-Object { $_.LastWriteTime -gt $mt } ^| Select-Object -First 1 >> "%LOGDIR%\_watch_frontend.ps1"
+echo     if ($c) { >> "%LOGDIR%\_watch_frontend.ps1"
+echo       Write-Host '  [Auto-reload] Frontend file changed, restarting...' >> "%LOGDIR%\_watch_frontend.ps1"
+echo       ^& $rt stop $ctr >> "%LOGDIR%\_watch_frontend.ps1"
+echo       Start-Sleep -Seconds 2 >> "%LOGDIR%\_watch_frontend.ps1"
+echo       ^& $rt start $ctr >> "%LOGDIR%\_watch_frontend.ps1"
+echo       (Get-Item $ref).LastWriteTime = Get-Date >> "%LOGDIR%\_watch_frontend.ps1"
+echo     } >> "%LOGDIR%\_watch_frontend.ps1"
+echo   } >> "%LOGDIR%\_watch_frontend.ps1"
+echo } >> "%LOGDIR%\_watch_frontend.ps1"
+start /b powershell -NoProfile -ExecutionPolicy Bypass -File "%LOGDIR%\_watch_frontend.ps1"
+call :log_silent "Frontend auto-reload watcher started"
+goto :eof
+
+:stop_frontend_watcher
+del "%LOGDIR%\.frontend_watcher_active" >nul 2>&1
+call :log_silent "Frontend auto-reload watcher stopped"
+goto :eof
+
+:stop_all_watchers
+if "!AUTO_RELOAD_BACKEND!"=="0" goto :saw_skip_be
+set "AUTO_RELOAD_BACKEND=0"
+del "%LOGDIR%\.backend_watcher_active" >nul 2>&1
+call :log_silent "Backend auto-reload watcher stopped"
+:saw_skip_be
+if "!AUTO_RELOAD_FRONTEND!"=="0" goto :saw_skip_fe
+set "AUTO_RELOAD_FRONTEND=0"
+del "%LOGDIR%\.frontend_watcher_active" >nul 2>&1
+call :log_silent "Frontend auto-reload watcher stopped"
+:saw_skip_fe
+goto :eof
+
+:: ============================================================================
 :: Dev Panel
 :: ============================================================================
 
 :dev_panel
+cls
 echo.
 echo   ═══ Dev Panel ═══
 echo.
+if defined PANEL_MSG (
+    echo   !PANEL_MSG!
+    echo.
+    set "PANEL_MSG="
+)
 echo   Access URLs:
 echo     App (via Caddy):  http://localhost:%CADDY_PORT%/researchai/
 echo     API (via Caddy):  http://localhost:%CADDY_PORT%/researchai-api/health
@@ -547,9 +645,17 @@ echo     [6] Rebuild frontend (full image rebuild)
 echo     [7] Rebuild backend (full image rebuild)
 echo     [8] Show container status
 echo     [9] Open in browser
+echo.
+set "BE_WATCH=OFF"
+if "!AUTO_RELOAD_BACKEND!"=="1" set "BE_WATCH=ON"
+set "FE_WATCH=OFF"
+if "!AUTO_RELOAD_FRONTEND!"=="1" set "FE_WATCH=ON"
+echo     [A] Toggle auto-reload: Backend [!BE_WATCH!]
+echo     [F] Toggle auto-reload: Frontend [!FE_WATCH!]
+echo.
 echo     [0] Stop all ^& exit
 echo.
-choice /c 1234567890 /n /m "  Select option: "
+choice /c 1234567890AF /n /m "  Select option: "
 set "PANEL_CHOICE=%errorlevel%"
 call :log_silent "Dev panel selection: %PANEL_CHOICE%"
 
@@ -563,6 +669,8 @@ if "%PANEL_CHOICE%"=="7" goto :panel_rebuild_backend
 if "%PANEL_CHOICE%"=="8" goto :panel_status
 if "%PANEL_CHOICE%"=="9" goto :panel_browser
 if "%PANEL_CHOICE%"=="10" goto :panel_exit
+if "%PANEL_CHOICE%"=="11" goto :panel_toggle_backend_watch
+if "%PANEL_CHOICE%"=="12" goto :panel_toggle_frontend_watch
 goto :dev_panel
 
 :panel_frontend_logs
@@ -590,16 +698,18 @@ goto :dev_panel
 call :log_silent "Restarting frontend..."
 echo   Restarting frontend...
 %RT% restart %FRONTEND_CTR% >nul 2>&1
+copy nul "%LOGDIR%\.frontend_last_start" >nul 2>&1
 call :log_silent "Frontend restarted"
-echo   [OK] Frontend restarted.
+set "PANEL_MSG=[OK] Frontend restarted."
 goto :dev_panel
 
 :panel_restart_backend
 call :log_silent "Restarting backend..."
 echo   Restarting backend...
 %RT% restart %BACKEND_CTR% >nul 2>&1
+copy nul "%LOGDIR%\.backend_last_start" >nul 2>&1
 call :log_silent "Backend restarted"
-echo   [OK] Backend restarted.
+set "PANEL_MSG=[OK] Backend restarted."
 goto :dev_panel
 
 :panel_rebuild_frontend
@@ -608,7 +718,7 @@ echo   Rebuilding frontend...
 %RT% rm -f %FRONTEND_CTR% >nul 2>&1
 call :start_frontend
 call :log_silent "Frontend rebuilt and started"
-echo   [OK] Frontend rebuilt and started.
+set "PANEL_MSG=[OK] Frontend rebuilt and started."
 goto :dev_panel
 
 :panel_rebuild_backend
@@ -617,7 +727,7 @@ echo   Rebuilding backend...
 %RT% rm -f %BACKEND_CTR% >nul 2>&1
 call :start_backend
 call :log_silent "Backend rebuilt and started"
-echo   [OK] Backend rebuilt and started.
+set "PANEL_MSG=[OK] Backend rebuilt and started."
 goto :dev_panel
 
 :panel_status
@@ -630,6 +740,9 @@ if !errorlevel! equ 0 (echo     * %CADDY_CTR% — running) else (echo     - %CAD
 if !errorlevel! equ 0 (echo     * %FRONTEND_CTR% — running) else (echo     - %FRONTEND_CTR% — stopped or not created)
 %RT% container inspect --format "{{.State.Running}}" %BACKEND_CTR% >nul 2>&1
 if !errorlevel! equ 0 (echo     * %BACKEND_CTR% — running) else (echo     - %BACKEND_CTR% — stopped or not created)
+echo.
+echo   Press any key to return...
+pause >nul
 goto :dev_panel
 
 :panel_browser
@@ -637,10 +750,46 @@ set "URL=http://localhost:%CADDY_PORT%/researchai/"
 call :log_silent "Opening browser: %URL%"
 echo   Opening %URL% ...
 start "" "%URL%"
+set "PANEL_MSG=[OK] Browser opened."
+goto :dev_panel
+
+:panel_toggle_backend_watch
+if "!STARTED_BACKEND!"=="0" (
+    set "PANEL_MSG=[!] Backend is not running — cannot enable auto-reload"
+    goto :dev_panel
+)
+if "!AUTO_RELOAD_BACKEND!"=="1" goto :panel_disable_backend_watch
+set "AUTO_RELOAD_BACKEND=1"
+call :start_backend_watcher
+set "PANEL_MSG=[OK] Auto-reload: Backend enabled (watching *.py files)"
+goto :dev_panel
+
+:panel_disable_backend_watch
+set "AUTO_RELOAD_BACKEND=0"
+call :stop_backend_watcher
+set "PANEL_MSG=[OK] Auto-reload: Backend disabled"
+goto :dev_panel
+
+:panel_toggle_frontend_watch
+if "!STARTED_FRONTEND!"=="0" (
+    set "PANEL_MSG=[!] Frontend is not running — cannot enable auto-reload"
+    goto :dev_panel
+)
+if "!AUTO_RELOAD_FRONTEND!"=="1" goto :panel_disable_frontend_watch
+set "AUTO_RELOAD_FRONTEND=1"
+call :start_frontend_watcher
+set "PANEL_MSG=[OK] Auto-reload: Frontend enabled (watching source files)"
+goto :dev_panel
+
+:panel_disable_frontend_watch
+set "AUTO_RELOAD_FRONTEND=0"
+call :stop_frontend_watcher
+set "PANEL_MSG=[OK] Auto-reload: Frontend disabled"
 goto :dev_panel
 
 :panel_exit
 call :log_silent "User requested stop all and exit"
+call :stop_all_watchers
 call :stop_all
 set "KEEP_ALIVE=0"
 goto :eof_final
@@ -658,6 +807,7 @@ goto :eof_final
 :eof_final
 if "%KEEP_ALIVE%" neq "1" goto :eof_done
 call :log_silent "Window closing — stopping containers (KEEP_ALIVE mode)..."
+call :stop_all_watchers
 call :stop_all
 
 :eof_done

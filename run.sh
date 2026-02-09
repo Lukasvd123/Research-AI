@@ -37,10 +37,19 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m'
 
-# --- Runtime detection variable ---
+# --- State ---
 RT=""
 KEEP_ALIVE=0
 CLEANUP_DONE=0
+STARTED_FRONTEND=0
+STARTED_BACKEND=0
+AUTO_RELOAD_BACKEND=0
+AUTO_RELOAD_FRONTEND=0
+BACKEND_WATCHER_PID=""
+FRONTEND_WATCHER_PID=""
+
+# Clean up stale watcher files from previous runs
+rm -f "$LOGDIR/.backend_watcher_active" "$LOGDIR/.frontend_watcher_active"
 
 # ============================================================================
 # Logging
@@ -253,6 +262,7 @@ start_caddy() {
   log_silent "Starting Caddy proxy on port $CADDY_PORT..."
   echo "Starting Caddy proxy on port $CADDY_PORT..."
   if ! $RT run -d --name "$CADDY_CTR" \
+    --add-host=host.containers.internal:host-gateway \
     -p "$CADDY_PORT:80" \
     "$CADDY_IMG" >> "$LOGFILE" 2>&1; then
     log "ERROR: Failed to start Caddy container"
@@ -294,6 +304,7 @@ start_backend() {
 
   print_status "Backend running on http://localhost:$BACKEND_PORT"
   log_silent "Backend running on http://localhost:$BACKEND_PORT"
+  touch "$LOGDIR/.backend_last_start"
 }
 
 start_frontend() {
@@ -333,6 +344,7 @@ start_frontend() {
 
   print_status "Frontend running on http://localhost:$FRONTEND_PORT"
   log_silent "Frontend running on http://localhost:$FRONTEND_PORT"
+  touch "$LOGDIR/.frontend_last_start"
 }
 
 stop_all() {
@@ -362,10 +374,106 @@ resume_all() {
       print_status "Resumed $ctr"
       log_silent "Resumed $ctr"
     else
-      print_warn "$ctr does not exist — run 'Both' first to create it."
+      print_warn "$ctr does not exist — run 'Backend' first to create it."
       log_silent "WARN: $ctr does not exist"
     fi
   done
+}
+
+# ============================================================================
+# Health Check — verifies containers are running and endpoints respond
+# ============================================================================
+
+check_health() {
+  log_silent "Running health checks..."
+  echo ""
+  echo -e "  ${BOLD}Waiting for services to initialize (5s)...${NC}"
+  sleep 5
+  echo ""
+  echo -e "  ${BOLD}─── Health Check ───${NC}"
+  echo ""
+
+  local all_ok=1
+
+  # --- Container status ---
+  if is_running "$CADDY_CTR"; then
+    echo -e "    ${GREEN}[OK]${NC}   Caddy container"
+  else
+    echo -e "    ${RED}[FAIL]${NC} Caddy container — not running"
+    all_ok=0
+  fi
+
+  if [ "$STARTED_FRONTEND" = "1" ]; then
+    if is_running "$FRONTEND_CTR"; then
+      echo -e "    ${GREEN}[OK]${NC}   Frontend container"
+    else
+      echo -e "    ${RED}[FAIL]${NC} Frontend container — not running"
+      all_ok=0
+    fi
+  fi
+
+  if [ "$STARTED_BACKEND" = "1" ]; then
+    if is_running "$BACKEND_CTR"; then
+      echo -e "    ${GREEN}[OK]${NC}   Backend container"
+    else
+      echo -e "    ${RED}[FAIL]${NC} Backend container — not running"
+      all_ok=0
+    fi
+  fi
+
+  # --- HTTP endpoint checks ---
+  if ! command -v curl &>/dev/null; then
+    echo ""
+    echo -e "    ${YELLOW}[SKIP]${NC} curl not found — HTTP checks skipped"
+  else
+    echo ""
+
+    if [ "$STARTED_FRONTEND" = "1" ]; then
+      if curl -sf -o /dev/null "http://localhost:$FRONTEND_PORT/researchai/" 2>/dev/null; then
+        echo -e "    ${GREEN}[OK]${NC}   Frontend direct — http://localhost:$FRONTEND_PORT/researchai/"
+      else
+        echo -e "    ${RED}[FAIL]${NC} Frontend direct — http://localhost:$FRONTEND_PORT/researchai/"
+        all_ok=0
+      fi
+    fi
+
+    if [ "$STARTED_BACKEND" = "1" ]; then
+      if curl -sf -o /dev/null "http://localhost:$BACKEND_PORT/health" 2>/dev/null; then
+        echo -e "    ${GREEN}[OK]${NC}   Backend direct — http://localhost:$BACKEND_PORT/health"
+      else
+        echo -e "    ${RED}[FAIL]${NC} Backend direct — http://localhost:$BACKEND_PORT/health"
+        all_ok=0
+      fi
+    fi
+
+    # Caddy proxy checks
+    if [ "$STARTED_FRONTEND" = "1" ]; then
+      if curl -sf -o /dev/null "http://localhost:$CADDY_PORT/researchai/" 2>/dev/null; then
+        echo -e "    ${GREEN}[OK]${NC}   Caddy → Frontend — http://localhost:$CADDY_PORT/researchai/"
+      else
+        echo -e "    ${RED}[FAIL]${NC} Caddy → Frontend — http://localhost:$CADDY_PORT/researchai/"
+        all_ok=0
+      fi
+    fi
+
+    if [ "$STARTED_BACKEND" = "1" ]; then
+      if curl -sf -o /dev/null "http://localhost:$CADDY_PORT/researchai-api/health" 2>/dev/null; then
+        echo -e "    ${GREEN}[OK]${NC}   Caddy → Backend — http://localhost:$CADDY_PORT/researchai-api/health"
+      else
+        echo -e "    ${RED}[FAIL]${NC} Caddy → Backend — http://localhost:$CADDY_PORT/researchai-api/health"
+        all_ok=0
+      fi
+    fi
+  fi
+
+  echo ""
+  if [ "$all_ok" = "1" ]; then
+    print_status "All services are healthy!"
+    log_silent "Health check: all OK"
+  else
+    print_warn "Some checks failed — use Dev Panel to view container logs"
+    log_silent "Health check: some failures"
+  fi
 }
 
 # ============================================================================
@@ -383,6 +491,90 @@ view_container_logs() {
     trap 'true' INT
   else
     trap - INT
+  fi
+}
+
+# ============================================================================
+# Auto-reload watchers
+# ============================================================================
+
+start_backend_watcher() {
+  touch "$LOGDIR/.backend_watcher_active"
+  # Ensure reference file exists (use container start time if available)
+  [ -f "$LOGDIR/.backend_last_start" ] || touch "$LOGDIR/.backend_last_start"
+  (
+    while [ -f "$LOGDIR/.backend_watcher_active" ]; do
+      sleep 3
+      if [ -f "$LOGDIR/.backend_last_start" ]; then
+        newer=$(find "$SCRIPT_DIR/backend" -newer "$LOGDIR/.backend_last_start" -name "*.py" -type f 2>/dev/null | head -1)
+        if [ -n "$newer" ]; then
+          echo -e "\n  ${YELLOW}[Auto-reload]${NC} Backend file changed, restarting..."
+          log_silent "Auto-reload: backend file changed: $newer"
+          $RT stop "$BACKEND_CTR" 2>/dev/null || true
+          sleep 2
+          $RT start "$BACKEND_CTR" 2>/dev/null || true
+          touch "$LOGDIR/.backend_last_start"
+          log_silent "Auto-reload: backend restarted"
+        fi
+      fi
+    done
+  ) &
+  BACKEND_WATCHER_PID=$!
+  log_silent "Backend auto-reload watcher started (PID: $BACKEND_WATCHER_PID)"
+}
+
+stop_backend_watcher() {
+  rm -f "$LOGDIR/.backend_watcher_active"
+  if [ -n "$BACKEND_WATCHER_PID" ]; then
+    kill "$BACKEND_WATCHER_PID" 2>/dev/null || true
+    wait "$BACKEND_WATCHER_PID" 2>/dev/null || true
+    BACKEND_WATCHER_PID=""
+  fi
+  log_silent "Backend auto-reload watcher stopped"
+}
+
+start_frontend_watcher() {
+  touch "$LOGDIR/.frontend_watcher_active"
+  [ -f "$LOGDIR/.frontend_last_start" ] || touch "$LOGDIR/.frontend_last_start"
+  (
+    while [ -f "$LOGDIR/.frontend_watcher_active" ]; do
+      sleep 3
+      if [ -f "$LOGDIR/.frontend_last_start" ]; then
+        newer=$(find "$SCRIPT_DIR/frontend" -newer "$LOGDIR/.frontend_last_start" \( -name "*.ts" -o -name "*.tsx" -o -name "*.css" -o -name "*.html" -o -name "*.json" \) -type f 2>/dev/null | head -1)
+        if [ -n "$newer" ]; then
+          echo -e "\n  ${YELLOW}[Auto-reload]${NC} Frontend file changed, restarting..."
+          log_silent "Auto-reload: frontend file changed: $newer"
+          $RT stop "$FRONTEND_CTR" 2>/dev/null || true
+          sleep 2
+          $RT start "$FRONTEND_CTR" 2>/dev/null || true
+          touch "$LOGDIR/.frontend_last_start"
+          log_silent "Auto-reload: frontend restarted"
+        fi
+      fi
+    done
+  ) &
+  FRONTEND_WATCHER_PID=$!
+  log_silent "Frontend auto-reload watcher started (PID: $FRONTEND_WATCHER_PID)"
+}
+
+stop_frontend_watcher() {
+  rm -f "$LOGDIR/.frontend_watcher_active"
+  if [ -n "$FRONTEND_WATCHER_PID" ]; then
+    kill "$FRONTEND_WATCHER_PID" 2>/dev/null || true
+    wait "$FRONTEND_WATCHER_PID" 2>/dev/null || true
+    FRONTEND_WATCHER_PID=""
+  fi
+  log_silent "Frontend auto-reload watcher stopped"
+}
+
+stop_all_watchers() {
+  if [ "$AUTO_RELOAD_BACKEND" = "1" ]; then
+    AUTO_RELOAD_BACKEND=0
+    stop_backend_watcher
+  fi
+  if [ "$AUTO_RELOAD_FRONTEND" = "1" ]; then
+    AUTO_RELOAD_FRONTEND=0
+    stop_frontend_watcher
   fi
 }
 
@@ -416,6 +608,15 @@ dev_panel() {
     echo "    [7] Rebuild backend (full image rebuild)"
     echo "    [8] Show container status"
     echo "    [9] Open in browser"
+    echo ""
+    # Auto-reload status
+    local be_watch="OFF"
+    local fe_watch="OFF"
+    [ "$AUTO_RELOAD_BACKEND" = "1" ] && be_watch="ON"
+    [ "$AUTO_RELOAD_FRONTEND" = "1" ] && fe_watch="ON"
+    echo -e "    [A] Toggle auto-reload: Backend [${BOLD}$be_watch${NC}]"
+    echo -e "    [F] Toggle auto-reload: Frontend [${BOLD}$fe_watch${NC}]"
+    echo ""
     echo "    [0] Stop all & exit"
     echo ""
     echo -n "  Select option: "
@@ -443,6 +644,7 @@ dev_panel() {
         echo "Restarting frontend..."
         log_silent "Restarting frontend..."
         $RT restart "$FRONTEND_CTR" 2>/dev/null || true
+        touch "$LOGDIR/.frontend_last_start"
         print_status "Frontend restarted."
         log_silent "Frontend restarted"
         ;;
@@ -450,6 +652,7 @@ dev_panel() {
         echo "Restarting backend..."
         log_silent "Restarting backend..."
         $RT restart "$BACKEND_CTR" 2>/dev/null || true
+        touch "$LOGDIR/.backend_last_start"
         print_status "Backend restarted."
         log_silent "Backend restarted"
         ;;
@@ -500,8 +703,35 @@ dev_panel() {
           print_warn "Could not detect browser opener. Visit: $url"
         fi
         ;;
+      a|A)
+        if [ "$STARTED_BACKEND" = "0" ]; then
+          print_warn "Backend is not running — cannot enable auto-reload"
+        elif [ "$AUTO_RELOAD_BACKEND" = "0" ]; then
+          AUTO_RELOAD_BACKEND=1
+          start_backend_watcher
+          print_status "Auto-reload: Backend enabled (watching *.py files)"
+        else
+          AUTO_RELOAD_BACKEND=0
+          stop_backend_watcher
+          print_status "Auto-reload: Backend disabled"
+        fi
+        ;;
+      f|F)
+        if [ "$STARTED_FRONTEND" = "0" ]; then
+          print_warn "Frontend is not running — cannot enable auto-reload"
+        elif [ "$AUTO_RELOAD_FRONTEND" = "0" ]; then
+          AUTO_RELOAD_FRONTEND=1
+          start_frontend_watcher
+          print_status "Auto-reload: Frontend enabled (watching source files)"
+        else
+          AUTO_RELOAD_FRONTEND=0
+          stop_frontend_watcher
+          print_status "Auto-reload: Frontend disabled"
+        fi
+        ;;
       0)
         log_silent "User requested stop all and exit"
+        stop_all_watchers
         stop_all
         CLEANUP_DONE=1
         exit 0
@@ -530,7 +760,7 @@ lifetime_menu() {
     1)
       KEEP_ALIVE=1
       log_silent "Lifetime: Keep alive while window open"
-      trap 'if [ "$CLEANUP_DONE" != "1" ]; then CLEANUP_DONE=1; echo ""; log "Window closing — stopping containers..."; stop_all; fi' EXIT
+      trap 'if [ "$CLEANUP_DONE" != "1" ]; then CLEANUP_DONE=1; echo ""; stop_all_watchers; log "Window closing — stopping containers..."; stop_all; fi' EXIT
       ;;
     2)
       KEEP_ALIVE=0
@@ -540,7 +770,7 @@ lifetime_menu() {
       print_warn "Invalid choice, defaulting to 'keep alive while window open'"
       KEEP_ALIVE=1
       log_silent "Lifetime: Keep alive while window open (default)"
-      trap 'if [ "$CLEANUP_DONE" != "1" ]; then CLEANUP_DONE=1; echo ""; log "Window closing — stopping containers..."; stop_all; fi' EXIT
+      trap 'if [ "$CLEANUP_DONE" != "1" ]; then CLEANUP_DONE=1; echo ""; stop_all_watchers; log "Window closing — stopping containers..."; stop_all; fi' EXIT
       ;;
   esac
 }
@@ -555,11 +785,10 @@ main_menu() {
 
   echo ""
   echo -e "  ${BOLD}What would you like to run?${NC}"
-  echo "    [1] Frontend only"
-  echo "    [2] Backend only"
-  echo "    [3] Both (frontend + backend + Caddy proxy)"
-  echo "    [4] Shut down all dev containers"
-  echo "    [5] Resume existing containers"
+  echo "    [1] Frontend only (+ Caddy proxy)"
+  echo "    [2] Backend (full stack)"
+  echo "    [3] Shut down all dev containers"
+  echo "    [4] Resume existing containers"
   echo ""
   echo -n "  Select option: "
   read -r main_choice
@@ -568,37 +797,38 @@ main_menu() {
 
   case "$main_choice" in
     1)
-      log_silent "Mode: Frontend only"
+      STARTED_FRONTEND=1
+      log_silent "Mode: Frontend only (+ Caddy)"
       lifetime_menu
       start_frontend
       start_caddy
+      check_health
       dev_panel
       ;;
     2)
-      log_silent "Mode: Backend only"
-      lifetime_menu
-      start_backend
-      start_caddy
-      dev_panel
-      ;;
-    3)
-      log_silent "Mode: Both (frontend + backend + Caddy)"
+      STARTED_FRONTEND=1
+      STARTED_BACKEND=1
+      log_silent "Mode: Backend (full stack)"
       lifetime_menu
       start_backend
       start_frontend
       start_caddy
+      check_health
       dev_panel
       ;;
-    4)
+    3)
       log_silent "Mode: Shut down all"
       stop_all
       echo ""
       echo "Press Enter to exit..."
       read -r
       ;;
-    5)
+    4)
+      STARTED_FRONTEND=1
+      STARTED_BACKEND=1
       log_silent "Mode: Resume existing"
       resume_all
+      check_health
       dev_panel
       ;;
     *)

@@ -5,10 +5,10 @@ const App = () => {
   return (
     <div className="App">
       <header className="App-header">
-        <h1>TESTSS React App</h1>
+        <h1>TESTS React App</h1>
       </header>
       <main>
-        <FruitList />
+        <FruitList/>
       </main>
     </div>
   );

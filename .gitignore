@@ -2,6 +2,69 @@
 __pycache__/
 *.py[codz]
 *$py.class
+################################################################################
+# OpenAI Codex (Codex CLI / IDE integrations)
+# (Codex CLI config is usually in ~/.codex, but ignore any repo-local codex dirs)
+################################################################################
+.codex/
+.codex-cache/
+.codex-logs/
+
+################################################################################
+# Anthropic Claude Code
+# Anthropic docs: project settings in .claude/settings.json and .claude/settings.local.json
+# .claude/settings.local.json is explicitly meant to be NOT checked in.
+################################################################################
+.claude/
+.claude/settings.local.json
+
+################################################################################
+# Gemini CLI
+# Some Gemini CLI implementations store project artifacts under .gemini/ or similar.
+# Also ignore common temp/history folders if they appear in-repo.
+################################################################################
+.gemini/
+.gemini/tmp/
+.gemini/cache/
+.gemini/history/
+
+################################################################################
+# Cursor (AI editor)
+################################################################################
+.cursor/
+.cursor-cache/
+**/.cursor/
+
+################################################################################
+# Windsurf (Codeium)
+################################################################################
+.windsurf/
+**/.windsurf/
+
+################################################################################
+# VS Code / JetBrains (often contain AI state indirectly)
+# Keep the common shared VS Code config files, ignore the rest.
+################################################################################
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+
+.idea/
+*.iml
+
+################################################################################
+# Generic AI chat exports / transcripts (only if you don't want them versioned)
+################################################################################
+**/*chat*.md
+**/*chat*.txt
+**/*conversation*.md
+**/*conversation*.txt
+**/*transcript*.md
+**/*transcript*.txt
+**/*prompt*.md
+**/*prompt*.txt
 
 # C extensions
 *.so

@@ -31,7 +31,7 @@ memory_db = {"fruits": []}
 def health():
     return {
         "status": "ok",
-        "service": "Research-AI Backend",
+        "service": "Research-AI Baacensd",
         "time": datetime.now().isoformat(),
         "fruit_count": len(memory_db["fruits"]),
     }
