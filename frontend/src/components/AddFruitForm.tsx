@@ -1,9 +1,13 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 
-const AddFruitForm = ({ addFruit }) => {
+interface AddFruitFormProps {
+  addFruit: (name: string) => void;
+}
+
+const AddFruitForm = ({ addFruit }: AddFruitFormProps) => {
   const [fruitName, setFruitName] = useState('');
 
-  const handleSubmit = (event) => {
+  const handleSubmit = (event: React.FormEvent) => {
     event.preventDefault();
     if (fruitName) {
       addFruit(fruitName);

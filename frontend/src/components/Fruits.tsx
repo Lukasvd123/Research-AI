@@ -1,9 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import api from "../api.js";
+import { useEffect, useState } from 'react';
+import api from '../api';
 import AddFruitForm from './AddFruitForm';
 
+interface Fruit {
+  name: string;
+}
+
 const FruitList = () => {
-  const [fruits, setFruits] = useState([]);
+  const [fruits, setFruits] = useState<Fruit[]>([]);
 
   const fetchFruits = async () => {
     try {
@@ -14,10 +18,10 @@ const FruitList = () => {
     }
   };
 
-  const addFruit = async (fruitName) => {
+  const addFruit = async (fruitName: string) => {
     try {
       await api.post('/fruits', { name: fruitName });
-      fetchFruits();  // Refresh the list after adding a fruit
+      fetchFruits();
     } catch (error) {
       console.error("Error adding fruit", error);
     }

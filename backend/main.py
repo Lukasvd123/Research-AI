@@ -1,3 +1,4 @@
+import os
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,13 +10,11 @@ class Fruit(BaseModel):
 
 class Fruits(BaseModel):
     fruits: List[Fruit]
-    
+
 app = FastAPI(debug=True)
 
-origins = [
-    "http://localhost:5173",
-    # Add more origins here
-]
+cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+origins = [o.strip() for o in cors_env.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
@@ -35,7 +34,7 @@ def get_fruits():
 def add_fruit(fruit: Fruit):
     memory_db["fruits"].append(fruit)
     return fruit
-    
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
