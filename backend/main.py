@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,15 @@ app.add_middleware(
 
 memory_db = {"fruits": []}
 
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "service": "Research-AI Backend",
+        "time": datetime.now().isoformat(),
+        "fruit_count": len(memory_db["fruits"]),
+    }
+
 @app.get("/fruits", response_model=Fruits)
 def get_fruits():
     return Fruits(fruits=memory_db["fruits"])
@@ -33,7 +43,12 @@ def get_fruits():
 @app.post("/fruits")
 def add_fruit(fruit: Fruit):
     memory_db["fruits"].append(fruit)
-    return fruit
+    return {"name": fruit.name, "total": len(memory_db["fruits"])}
+
+@app.delete("/fruits")
+def clear_fruits():
+    memory_db["fruits"].clear()
+    return {"status": "cleared"}
 
 
 if __name__ == "__main__":
