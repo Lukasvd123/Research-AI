@@ -17,13 +17,13 @@ app = FastAPI(debug=True)
 cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
 origins = [o.strip() for o in cors_env.split(",")]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=origins,
+#     allow_credentials=True,
+#     allow_methods=["*"],
+#     allow_headers=["*"],
+# )
 
 memory_db = {"fruits": []}
 
