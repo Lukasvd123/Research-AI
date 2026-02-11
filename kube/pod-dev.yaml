@@ -7,22 +7,31 @@ spec:
     # --- Container 1: API ---
     - name: api
       image: research-ai-api:dev
-      ports:
-        - containerPort: 8000
+      env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: FORCE_COLOR
+          value: "1"
       envFrom:
         - configMapRef:
             name: research-ai-env
+      ports:
+        - containerPort: 8000
       volumeMounts:
         - name: api-src
           mountPath: /app
+      
 
     # --- Container 2: Frontend ---
     - name: frontend
       image: docker.io/library/node:20-alpine
+      workingDir: /work
+      env:
+        - name: FORCE_COLOR
+          value: "1"
       envFrom:
         - configMapRef:
             name: research-ai-env
-      workingDir: /work
       ports:
         - containerPort: 5173
       volumeMounts:
@@ -30,8 +39,6 @@ spec:
           mountPath: /work
         - name: frontend-node-modules
           mountPath: /work/node_modules
-        - name: frontend-cache
-          mountPath: /work/.cache
       command: ["sh","-lc"]
       args:
         - |
@@ -70,10 +77,6 @@ spec:
       persistentVolumeClaim:
         claimName: research-ai-modules-pvc
 
-    - name: frontend-cache
-      persistentVolumeClaim:
-        claimName: research-ai-cache-pvc
-
     - name: caddy-data
       hostPath:
         path: ./.caddy/data
@@ -100,15 +103,3 @@ spec:
   resources:
     requests:
       storage: 2Gi
-
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: research-ai-cache-pvc
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 1Gi
