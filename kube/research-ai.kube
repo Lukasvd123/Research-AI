@@ -1,0 +1,11 @@
+[Unit]
+Description=Research AI Production Service
+After=network-online.target
+
+[Kube]
+Yaml=/etc/research-ai/bundle.yaml
+PublishPort=80:8080
+PublishPort=443:8443
+
+[Install]
+WantedBy=default.target

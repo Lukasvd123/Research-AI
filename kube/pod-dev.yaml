@@ -4,7 +4,6 @@ metadata:
   name: research-ai-dev
 spec:
   containers:
-    # --- Container 1: API ---
     - name: api
       image: research-ai-api:dev
       env:
@@ -19,10 +18,12 @@ spec:
         - containerPort: 8000
       volumeMounts:
         - name: api-src
-          mountPath: /app
-      
+          mountPath: /work
+      command: ["bash", "-lc"]
+      args:
+        - |
+          exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
-    # --- Container 2: Frontend ---
     - name: frontend
       image: docker.io/library/node:20-alpine
       workingDir: /work
@@ -45,10 +46,12 @@ spec:
           npm install
           exec npm run dev -- --host 0.0.0.0 --port 5173
 
-    # --- Container 3: Caddy ---
     - name: caddy
       image: docker.io/library/caddy:2-alpine
       ports:
+        - containerPort: 80
+          hostPort: 8080
+          hostIP: 127.0.0.1
         - containerPort: 443
           hostPort: 8443
           hostIP: 127.0.0.1

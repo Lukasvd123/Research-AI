@@ -6,18 +6,15 @@
 localhost {
   tls internal
 
-  # Regular API used by the frontend
   handle /api/* {
     uri strip_prefix /api
     reverse_proxy localhost:8000
   }
 
-  # AI-only API
   handle /ai/* {
     reverse_proxy localhost:8001
   }
 
-  # Frontend (Vite dev server)
   handle {
     reverse_proxy localhost:5173
   }

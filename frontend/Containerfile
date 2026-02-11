@@ -1,0 +1,12 @@
+FROM docker.io/library/node:20-alpine AS build
+WORKDIR /src
+
+COPY frontend/package*.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
+FROM docker.io/library/caddy:2
+COPY caddy/Caddyfile.prod /etc/caddy/Caddyfile
+COPY --from=build /src/dist /srv
