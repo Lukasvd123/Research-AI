@@ -1,4 +1,4 @@
-.PHONY: up down watch wui wapi clear deploy logs clean
+.PHONY: up down watch wui wapi wbeat clear deploy logs clean
 
 # Where the final combined YAML will be written
 BUNDLE_DEST  := /etc/research-ai/bundle.yaml
@@ -10,10 +10,18 @@ UNIT_DEST    := /etc/containers/systemd/research-ai.kube
 up:
 	podman build -t research-ai-api:dev -f ./api/Containerfile .
 	mkdir -p .caddy/data .caddy/config
-	podman kube play kube/env.yaml kube/pod-dev.yaml
+	{ \
+        cat kube/env.yaml; \
+        echo "---"; \
+        cat kube/pod-dev.yaml; \
+    } | podman kube play -
 
 down:
-	podman kube down kube/pod-dev.yaml
+	{ \
+        cat kube/env.yaml; \
+        echo "---"; \
+        cat kube/pod-dev.yaml; \
+    } | podman kube down -
 
 labelSELinux:
 	sudo chcon -R -t container_file_t -l s0 frontend .
@@ -26,8 +34,11 @@ watch:
 wapi:
 	podman logs -f research-ai-dev-api
 
+wbeat:
+	podman logs -f research-ai-dev-surf-heartbeat
+
 wui:
-	podman logs -f research-ai-dev-
+	podman logs -f research-ai-dev-frontend
 
 clear:
 	podman rm -f -a

@@ -4,6 +4,16 @@ metadata:
   name: research-ai-dev
 spec:
   containers:
+    - name: surf-heartbeat
+      image: alpine:latest
+      envFrom:
+        - configMapRef:
+            name: research-ai-env
+      volumeMounts:
+        - name: heartbeat-script-file
+          mountPath: /scripts/surf-heartbeat.sh
+      command: ["sh", "/scripts/surf-heartbeat.sh"]
+
     - name: api
       image: research-ai-api:dev
       env:
@@ -66,6 +76,11 @@ spec:
           readOnly: true
 
   volumes:
+    - name: heartbeat-script-file
+      hostPath:
+        path: ./kube/surf-heartbeat.sh
+        type: File
+        
     - name: api-src
       hostPath:
         path: ./api
