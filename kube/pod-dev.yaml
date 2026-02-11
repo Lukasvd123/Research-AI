@@ -12,6 +12,7 @@ spec:
       volumeMounts:
         - name: heartbeat-script-file
           mountPath: /scripts/surf-heartbeat.sh
+          readOnly: true
       command: ["sh", "/scripts/surf-heartbeat.sh"]
 
     - name: api
