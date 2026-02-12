@@ -1,0 +1,38 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  issue_comment:
+    types: [created]
+
+jobs:
+  claude-review:
+    if: >
+      (github.event_name == 'pull_request') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       contains(github.event.comment.body, '@claude'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          model: "claude-sonnet-4-5-20250929"
+          direct_prompt: |
+            You are a senior code reviewer for Research-AI, a full-stack web application
+            with a Python backend and TypeScript/React frontend, deployed via Podman containers.
+
+            Review this pull request thoroughly:
+            - Check for bugs, logic errors, and edge cases
+            - Flag any security issues (XSS, injection, exposed secrets, etc.)
+            - Check code quality and readability
+            - Verify the changes match the PR description
+            - If something is unclear, ask the author for clarification
+            - Be constructive and specific - suggest fixes, not just problems
+
+            Keep the review concise. Only comment on things that matter.

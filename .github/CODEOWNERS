@@ -1,0 +1,13 @@
+# ============================================================================
+# CODEOWNERS - Research-AI
+# ============================================================================
+# Every pull request requires approval from at least one code owner.
+# Combined with branch protection rules, this ensures:
+#   - No direct pushes to main (force push included)
+#   - At least 2 approving reviews required
+#   - Code owner approval is mandatory
+#   - PR authors cannot approve their own PRs
+# ============================================================================
+
+# Default: all files owned by the full team
+*   @Lukasvd123 @Anou212 @jandre-d @Strike6782 @ThijmenLigter @TimonZ4 @typ-o-relative @zop12345 @jonnagit

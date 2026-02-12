@@ -11,6 +11,27 @@ param(
     [switch]$GUI
 )
 
+# -- Fix console for WSL output when launched from cmd -----------------------
+# Enable VT processing so bare \n from WSL doesn't cause staircase effect
+try {
+    Add-Type -MemberDefinition @'
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr GetStdHandle(int nStdHandle);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
+'@ -Name 'Console' -Namespace 'Win32' -ErrorAction SilentlyContinue
+    $hOut = [Win32.Console]::GetStdHandle(-11)
+    $mode = 0
+    [Win32.Console]::GetConsoleMode($hOut, [ref]$mode) | Out-Null
+    [Win32.Console]::SetConsoleMode($hOut, ($mode -bor 0x0004)) | Out-Null
+} catch {}
+
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+$OutputEncoding = [Console]::OutputEncoding
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -30,24 +51,216 @@ $script:Config = @{
 
 # -- State -------------------------------------------------------------------
 
-$script:KeepAlive          = $false
+$script:Indefinite         = $false
 $script:CleanupDone        = $false
 $script:WatcherJobs        = @{}
 $script:HeartbeatTimer     = $null
 $script:IsGuiMode          = $false
-$script:LogCallback        = $null   # GUI sets this to push log lines into the TextBox
+$script:LogCallback        = $null
 $script:HeartbeatFailCount = 0
 $script:HeartbeatWarning   = $false
 $script:HealthFrontend     = "unknown"
 $script:HealthBackend      = "unknown"
 $script:HealthLastCheck    = ""
 
+# Container ID -> friendly name cache
+$script:ContainerIdMap     = @{}
+
+# ============================================================================
+# WSL OUTPUT HELPERS
+# ============================================================================
+
+function Invoke-WslStream {
+    param(
+        [string]$Command,
+        [scriptblock]$OnLine
+    )
+
+    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+    $pinfo.FileName = "wsl.exe"
+    $pinfo.Arguments = "bash -c ""$Command"""
+    $pinfo.RedirectStandardOutput = $true
+    $pinfo.RedirectStandardError  = $true
+    $pinfo.UseShellExecute = $false
+    $pinfo.CreateNoWindow  = $true
+    $pinfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+
+    $proc = [System.Diagnostics.Process]::Start($pinfo)
+
+    while ($null -ne ($line = $proc.StandardOutput.ReadLine())) {
+        if (-not [string]::IsNullOrWhiteSpace($line)) {
+            & $OnLine $line
+        }
+    }
+
+    $proc.WaitForExit()
+    return $proc.ExitCode
+}
+
+function Invoke-WslCapture {
+    param([string]$Command)
+
+    $pinfo = New-Object System.Diagnostics.ProcessStartInfo
+    $pinfo.FileName = "wsl.exe"
+    $pinfo.Arguments = "bash -c ""$Command"""
+    $pinfo.RedirectStandardOutput = $true
+    $pinfo.RedirectStandardError  = $true
+    $pinfo.UseShellExecute = $false
+    $pinfo.CreateNoWindow  = $true
+    $pinfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+
+    $proc = [System.Diagnostics.Process]::Start($pinfo)
+    $output = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+
+    $script:LastWslExitCode = $proc.ExitCode
+    return ($output -split "`r?`n" | Where-Object { $_ -ne '' })
+}
+
+# ============================================================================
+# CONTAINER ID RESOLUTION
+# ============================================================================
+
+function Update-ContainerIdMap {
+    $raw = Invoke-WslCapture "podman ps --format '{{.ID}} {{.Names}}' 2>/dev/null"
+    if ($script:LastWslExitCode -ne 0) { return }
+    foreach ($line in $raw) {
+        if ($line -match '^([0-9a-fA-F]+)\s+(.+)$') {
+            $id   = $Matches[1].Trim()
+            $name = $Matches[2].Trim()
+            $label = $name -replace '^research-ai-dev-', ''
+            $script:ContainerIdMap[$id] = $label
+        }
+    }
+}
+
+function Get-ContainerLabel {
+    param([string]$Id)
+    if ($script:ContainerIdMap.ContainsKey($Id)) {
+        return $script:ContainerIdMap[$Id]
+    }
+    foreach ($key in $script:ContainerIdMap.Keys) {
+        if ($key.StartsWith($Id) -or $Id.StartsWith($key)) {
+            return $script:ContainerIdMap[$key]
+        }
+    }
+    if ($Id.Length -gt 8) { return $Id.Substring(0, 8) }
+    return $Id
+}
+
+$script:LabelDisplay = @{
+    "caddy"          = "  CDY"
+    "frontend"       = "   FE"
+    "api"            = "   BE"
+    "surf-heartbeat" = "   HB"
+    "neo4j"          = "  N4J"
+    "mongo"          = "  MDB"
+}
+
+function Get-PaddedLabel {
+    param([string]$Label)
+    if ($script:LabelDisplay.ContainsKey($Label)) {
+        return $script:LabelDisplay[$Label]
+    }
+    return $Label.PadLeft(5).Substring(0, 5)
+}
+
+# ============================================================================
+# LOG LINE FORMATTING
+# ============================================================================
+
+function Strip-Ansi {
+    param([string]$Text)
+    $clean = $Text -replace '\x1b\[[0-9;]*[A-Za-z]', ''
+    $clean = $clean -replace '\x1b\][^\x07\x1b]*(\x07|\x1b\\)', ''
+    $clean = $clean -replace '\x1b', ''
+    $clean = $clean -replace "`r(?!`n)", ''
+    return $clean
+}
+
+function Format-LogLine {
+    param([string]$RawLine)
+
+    $line = Strip-Ansi $RawLine
+    $line = $line -replace '\s+', ' '
+    $line = $line.Trim()
+
+    if ([string]::IsNullOrWhiteSpace($line)) { return $null }
+
+    if ($line -match '^([0-9a-fA-F]{8,64})\s(.*)$') {
+        $ctrId   = $Matches[1]
+        $content = $Matches[2]
+        $label   = Get-ContainerLabel $ctrId
+        $padded  = Get-PaddedLabel $label
+
+        $level = ""
+
+        if ($content -match '^(INFO|WARNING|ERROR|DEBUG|CRITICAL):\s+(.*)$') {
+            $level   = $Matches[1]
+            $content = $Matches[2]
+        }
+        elseif ($content -match '^\{.*?\}(\d{2}:\d{2}:\d{2}\s*-\s*.*)$') {
+            $content = $Matches[1]; $level = "INFO"
+        }
+        elseif ($content -match '^\d{2}:\d{2}:\d{2}\s*-\s*(.*)$') {
+            $content = $Matches[1]; $level = "INFO"
+        }
+        elseif ($content -match '^\{.+"level"\s*:\s*"([^"]+)".+"msg"\s*:\s*"([^"]*)"') {
+            $level = $Matches[1].ToUpper()
+            $msg   = $Matches[2]
+            $logger = ""
+            if ($content -match '"logger"\s*:\s*"([^"]*)"') { $logger = $Matches[1] }
+            $content = if ($logger) { "[$logger] $msg" } else { $msg }
+        }
+
+        $levelTag = switch ($level) {
+            "INFO"     { "INF" }
+            "WARNING"  { "WRN" }
+            "WARN"     { "WRN" }
+            "ERROR"    { "ERR" }
+            "DEBUG"    { "DBG" }
+            "CRITICAL" { "FTL" }
+            default    { "   " }
+        }
+
+        return "$padded $levelTag  $content"
+    }
+
+    return "            $line"
+}
+
+function Get-LogLevel {
+    param([string]$FormattedLine)
+    if ($FormattedLine -match '\sERR\s|\sFTL\s') { return "error" }
+    if ($FormattedLine -match '\sWRN\s')          { return "warn" }
+    if ($FormattedLine -match '\sDBG\s')          { return "debug" }
+    return "info"
+}
+
+function Write-FormattedLogLine {
+    param([string]$RawLine, [switch]$Stream)
+
+    $formatted = Format-LogLine $RawLine
+    if ($null -eq $formatted) { return }
+
+    $level = Get-LogLevel $formatted
+    switch ($level) {
+        "error" { Write-Host "  $formatted" -ForegroundColor Red }
+        "warn"  { Write-Host "  $formatted" -ForegroundColor Yellow }
+        "debug" { Write-Host "  $formatted" -ForegroundColor DarkGray }
+        default { Write-Host "  $formatted" }
+    }
+
+    $logTs = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "[$logTs] $formatted" | Out-File -Append -FilePath $script:Config.LogFile -Encoding utf8 -ErrorAction SilentlyContinue
+}
+
 # ============================================================================
 # LOGGING
 # ============================================================================
 
 function Initialize-Logging {
-    $script:Config.LogDir = Join-Path $script:Config.ScriptDir "logs"
+    $script:Config.LogDir = Join-Path $script:Config.DevDir "logs"
     if (-not (Test-Path $script:Config.LogDir)) {
         New-Item -ItemType Directory -Path $script:Config.LogDir -Force | Out-Null
     }
@@ -65,7 +278,6 @@ function Write-Log {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     if (-not $Silent) {
         Write-Host "  [$ts] $Message"
-        # In GUI mode, also push to the WPF TextBox via callback
         if ($script:LogCallback) {
             try { & $script:LogCallback "[$ts] $Message" } catch {}
         }
@@ -79,7 +291,6 @@ function Write-Log {
 
 function Get-WslPath {
     param([string]$WindowsPath)
-    # Convert C:\Users\...\Research-AI -> /mnt/c/Users/.../Research-AI
     $p = $WindowsPath -replace '\\', '/'
     if ($p -match '^([A-Za-z]):(.*)') {
         $drive = $Matches[1].ToLower()
@@ -92,7 +303,6 @@ function Get-WslPath {
 function Ensure-Prerequisites {
     Write-Log "Checking prerequisites..."
 
-    # 1. Check WSL executable
     Write-Log "Checking WSL..."
     $wslExe = Get-Command wsl.exe -ErrorAction SilentlyContinue
     if (-not $wslExe) {
@@ -100,10 +310,9 @@ function Ensure-Prerequisites {
     }
     Write-Log "[OK] WSL executable found"
 
-    # 2. Check WSL has a working Linux distribution (Ubuntu)
     Write-Log "Checking for WSL Linux distribution..."
-    $wslTest = wsl bash -c "echo ok" 2>$null
-    if ($LASTEXITCODE -ne 0 -or "$wslTest" -notmatch "ok") {
+    $wslTest = Invoke-WslCapture "echo ok"
+    if ($script:LastWslExitCode -ne 0 -or "$wslTest" -notmatch "ok") {
         Write-Log "[ERROR] No working WSL Linux distribution found"
         Write-Host ""
         Write-Host "  No working WSL Linux distribution found."
@@ -117,17 +326,15 @@ function Ensure-Prerequisites {
     }
     Write-Log "[OK] WSL Linux distribution is available"
 
-    # Resolve WSL path for the repo
     $script:Config.WslPath = Get-WslPath $script:Config.ScriptDir
     Write-Log "WSL project path: $($script:Config.WslPath)"
 
-    # 3. Check make in WSL (redirect stderr inside bash to avoid PowerShell ErrorRecords)
     Write-Log "Checking for 'make' in WSL..."
-    $makeCheck = wsl bash -c "command -v make 2>/dev/null"
-    if ($LASTEXITCODE -ne 0) {
+    $makeCheck = Invoke-WslCapture "command -v make 2>/dev/null"
+    if ($script:LastWslExitCode -ne 0) {
         Write-Log "'make' not found in WSL, attempting to install..."
-        $installOutput = wsl bash -c "sudo apt-get update -qq 2>&1 && sudo apt-get install -y -qq make 2>&1"
-        $installExit = $LASTEXITCODE
+        $installOutput = Invoke-WslCapture "sudo apt-get update -qq 2>&1 && sudo apt-get install -y -qq make 2>&1"
+        $installExit = $script:LastWslExitCode
         "$installOutput" | Out-File -Append $script:Config.LogFile -ErrorAction SilentlyContinue
         if ($installExit -ne 0) {
             Write-Log "[ERROR] Could not auto-install 'make' in WSL"
@@ -144,10 +351,9 @@ function Ensure-Prerequisites {
         Write-Log "[OK] make is available in WSL"
     }
 
-    # 4. Check podman in WSL
     Write-Log "Checking for 'podman' in WSL..."
-    $podmanCheck = wsl bash -c "command -v podman 2>/dev/null"
-    if ($LASTEXITCODE -ne 0) {
+    $podmanCheck = Invoke-WslCapture "command -v podman 2>/dev/null"
+    if ($script:LastWslExitCode -ne 0) {
         Write-Log "[ERROR] podman is not installed in WSL"
         Write-Host ""
         Write-Host "  podman is not installed in WSL."
@@ -159,9 +365,10 @@ function Ensure-Prerequisites {
     }
     Write-Log "[OK] podman is available in WSL"
 
-    # 5. Check kube/env.yaml
     Write-Log "Checking environment configuration..."
     Setup-EnvYaml
+
+    Update-ContainerIdMap
 
     Write-Log "All prerequisites satisfied."
 }
@@ -180,7 +387,6 @@ function Setup-EnvYaml {
         }
     }
 
-    # Check for placeholder/default values that the user needs to fill in
     $content = Get-Content $envYaml -Raw
     if ($content -match 'your_username' -or $content -match 'your_password') {
         Write-Log "[!] env.yaml contains placeholder credentials"
@@ -201,8 +407,6 @@ function Setup-EnvYaml {
             Write-Log "Please edit env.yaml before starting services: $envYaml"
         } else {
             Read-Host "  Press Enter after you have edited the file"
-
-            # Re-read and verify
             $content = Get-Content $envYaml -Raw
             if ($content -match 'your_username' -or $content -match 'your_password') {
                 Write-Log "[WARNING] env.yaml still contains placeholder values - continuing anyway"
@@ -221,21 +425,15 @@ function Invoke-Make {
     Write-Host ""
     Write-Log "Running: make $Target"
     Write-Host "  --------------------------------------------------------"
-    # Redirect stderr->stdout inside bash so PowerShell only sees plain strings,
-    # avoiding ErrorRecords that trigger $ErrorActionPreference = "Stop"
-    wsl bash -c "cd '$wslPath' && make $Target 2>&1" 2>$null | ForEach-Object {
-        $line = $_
-        if ($Stream) {
-            # Streaming mode (logs) - show raw for readability
-            Write-Host "  $line"
-        } else {
-            Write-Host "  > $line"
-        }
-        $logTs = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-        "[$logTs] $line" | Out-File -Append -FilePath $script:Config.LogFile -Encoding utf8 -ErrorAction SilentlyContinue
+
+    $cmd = "cd '$wslPath' && make $Target 2>&1"
+
+    $exitCode = Invoke-WslStream -Command $cmd -OnLine {
+        param($line)
+        Write-FormattedLogLine -RawLine $line -Stream:$Stream
     }
+
     Write-Host "  --------------------------------------------------------"
-    $exitCode = $LASTEXITCODE
     Write-Host ""
     if ($exitCode -ne 0) {
         Write-Log "[WARN] make $Target exited with code $exitCode"
@@ -257,22 +455,34 @@ function Test-ServiceHealth {
     Write-Host "`n  --- Health Check ---`n"
 
     $allOk = $true
+    $port = $cfg.CaddyPort
 
-    $endpoints = [ordered]@{
-        "Frontend (Caddy)" = "http://localhost:$($cfg.CaddyPort)/researchai/"
-        "Backend  (Caddy)" = "http://localhost:$($cfg.CaddyPort)/researchai-api/health"
+    $result = Invoke-WslCapture "echo FE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null); echo BE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null)"
+    $feCode = "000"; $beCode = "000"
+    foreach ($ln in $result) {
+        if ($ln -match '^FE=(\d+)') { $feCode = $Matches[1] }
+        if ($ln -match '^BE=(\d+)') { $beCode = $Matches[1] }
     }
 
-    foreach ($label in $endpoints.Keys) {
-        $url = $endpoints[$label]
-        # Use curl inside WSL for reliable access to podman containers
-        $code = wsl bash -c "curl -sf -o /dev/null -w '%{http_code}' '$url' 2>/dev/null" 2>$null
-        if ("$code" -match "^[23]") {
-            Write-Host "    [OK]    $label - $url"
-        } else {
-            Write-Host "    [FAIL]  $label - $url  (HTTP $code)"
-            $allOk = $false
-        }
+    $feOk = "$feCode" -match "^[23]"
+    $beOk = "$beCode" -match "^[23]"
+
+    $script:HealthFrontend  = if ($feOk) { "OK" } else { "DOWN" }
+    $script:HealthBackend   = if ($beOk) { "OK" } else { "DOWN" }
+    $script:HealthLastCheck = Get-Date -Format "HH:mm:ss"
+
+    if ($feOk) {
+        Write-Host "    [OK]    Frontend (Caddy) - http://localhost:$port/researchai/"
+    } else {
+        Write-Host "    [FAIL]  Frontend (Caddy) - http://localhost:$port/researchai/  (HTTP $feCode)"
+        $allOk = $false
+    }
+
+    if ($beOk) {
+        Write-Host "    [OK]    Backend  (Caddy) - http://localhost:$port/researchai-api/health"
+    } else {
+        Write-Host "    [FAIL]  Backend  (Caddy) - http://localhost:$port/researchai-api/health  (HTTP $beCode)"
+        $allOk = $false
     }
 
     Write-Host ""
@@ -296,16 +506,29 @@ function Start-HeartbeatMonitor {
     $script:HeartbeatWarning   = $false
 
     $timer = New-Object System.Timers.Timer
-    $timer.Interval = 60000  # 60 seconds
+    $timer.Interval = 35000
     $timer.AutoReset = $true
 
     $action = Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
-        # --- Heartbeat check (with grace period) ---
+        if ($script:HeartbeatTimer -and $script:HeartbeatTimer.Interval -lt 60000) {
+            $script:HeartbeatTimer.Interval = 60000
+        }
+
+        $port = 8080
         $ctrName = "research-ai-dev-surf-heartbeat"
-        $result = wsl bash -c "podman inspect --format '{{.State.Running}}' $ctrName 2>/dev/null"
-        if ($LASTEXITCODE -ne 0 -or $result -notmatch "true") {
+
+        # use Invoke-WslCapture for clean line handling
+        $result = Invoke-WslCapture "echo HB=`$(podman inspect --format '{{.State.Running}}' $ctrName 2>/dev/null || echo false); echo FE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null); echo BE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null)"
+
+        $hbOk = $false; $feCode = "000"; $beCode = "000"
+        foreach ($ln in $result) {
+            if ($ln -match '^HB=(.+)') { $hbOk = $Matches[1] -match "true" }
+            if ($ln -match '^FE=(\d+)') { $feCode = $Matches[1] }
+            if ($ln -match '^BE=(\d+)') { $beCode = $Matches[1] }
+        }
+
+        if (-not $hbOk) {
             $script:HeartbeatFailCount++
-            # Only warn after 3 consecutive failures (= 3 minutes grace)
             if ($script:HeartbeatFailCount -ge 3) {
                 $script:HeartbeatWarning = $true
             }
@@ -314,10 +537,6 @@ function Start-HeartbeatMonitor {
             $script:HeartbeatWarning = $false
         }
 
-        # --- Periodic health check (via WSL curl for reliable podman access) ---
-        $port = 8080
-        $feCode = wsl bash -c "curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null" 2>$null
-        $beCode = wsl bash -c "curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null" 2>$null
         $script:HealthFrontend  = if ("$feCode" -match "^[23]") { "OK" } else { "DOWN" }
         $script:HealthBackend   = if ("$beCode" -match "^[23]") { "OK" } else { "DOWN" }
         $script:HealthLastCheck = Get-Date -Format "HH:mm:ss"
@@ -336,6 +555,11 @@ function Stop-HeartbeatMonitor {
         Get-EventSubscriber | Where-Object { $_.SourceObject -is [System.Timers.Timer] } |
             Unregister-Event -ErrorAction SilentlyContinue
     }
+}
+
+function Stop-WslHeartbeats {
+    Write-Log "Terminating WSL heartbeat background processes..."
+    Invoke-WslCapture "pkill -f surf-heartbeat 2>/dev/null; true" | Out-Null
 }
 
 # ============================================================================
@@ -364,7 +588,7 @@ function Start-FileWatcher {
             $wslPath = $Event.MessageData.WslPath
             $name    = $Event.MessageData.Name
             Write-Host "  [Auto-reload] $name file changed: $($Event.SourceEventArgs.Name)"
-            wsl bash -c "cd '$wslPath' && make $target 2>&1" 2>$null | Out-Null
+            Invoke-WslCapture "cd '$wslPath' && make $target 2>&1" | Out-Null
         }
 
         $msgData = @{
@@ -444,8 +668,8 @@ function Show-MainMenu {
     )
 
     switch ($choice) {
-        0 { # full stack
-            $script:KeepAlive = (Show-LifetimeMenu)
+        0 {
+            $script:Indefinite = (Show-LifetimeMenu)
             Write-Log "Starting full stack..."
             $exitCode = Invoke-Make "up"
             if ($exitCode -ne 0) {
@@ -458,18 +682,20 @@ function Show-MainMenu {
                 Read-Host | Out-Null
                 return
             }
+            Update-ContainerIdMap
             Write-Log "Starting heartbeat monitor..."
             Start-HeartbeatMonitor
             Test-ServiceHealth | Out-Null
             Show-DevPanel
         }
-        1 { # stop all
+        1 {
             Write-Log "Stopping all containers..."
             Invoke-Make "down"
             Write-Log "All containers stopped."
             $script:CleanupDone = $true
         }
-        2 { # resume
+        2 {
+            $script:Indefinite = (Show-LifetimeMenu)
             Write-Log "Resuming stopped pod..."
             $exitCode = Invoke-Make "resume"
             if ($exitCode -ne 0) {
@@ -482,6 +708,7 @@ function Show-MainMenu {
                 Read-Host | Out-Null
                 return
             }
+            Update-ContainerIdMap
             Write-Log "Starting heartbeat monitor..."
             Start-HeartbeatMonitor
             Test-ServiceHealth | Out-Null
@@ -495,7 +722,7 @@ function Show-LifetimeMenu {
         'Keep alive while this window is open'
         'Run indefinitely - survive after script closes'
     )
-    return ($choice -eq 0)
+    return ($choice -eq 1)
 }
 
 function Show-DevPanel {
@@ -509,7 +736,6 @@ function Show-DevPanel {
         Write-Host "  ======================================================"
         Write-Host ""
 
-        # --- Status line ---
         $hbStatus = if ($script:HeartbeatWarning) { "WARNING - stopped" } else { "OK" }
         $feStatus = $script:HealthFrontend
         $beStatus = $script:HealthBackend
@@ -535,7 +761,6 @@ function Show-DevPanel {
             $script:PanelMsg = $null
         }
 
-        # --- URLs ---
         Write-Host "  Access URLs:"
         Write-Host "    App:  http://localhost:$($cfg.CaddyPort)/researchai/"
         Write-Host "    API:  http://localhost:$($cfg.CaddyPort)/researchai-api/health"
@@ -543,7 +768,6 @@ function Show-DevPanel {
         Write-Host "  Log file: $($cfg.LogFile)"
         Write-Host ""
 
-        # --- Commands ---
         Write-Host "  Commands:"
         Write-Host "    [1] All logs              [5] Restart backend"
         Write-Host "    [2] Backend logs           [6] Restart frontend"
@@ -603,6 +827,7 @@ function Show-DevPanel {
             }
             "7" {
                 Invoke-Make "rebuild"
+                Update-ContainerIdMap
                 $script:PanelMsg = "[OK] Full rebuild complete."
             }
             "8" {
@@ -647,6 +872,7 @@ function Show-DevPanel {
             "0" {
                 Stop-AllWatchers
                 Stop-HeartbeatMonitor
+                Stop-WslHeartbeats
                 Invoke-Make "down"
                 $script:CleanupDone = $true
                 return
@@ -665,8 +891,11 @@ function Invoke-Cleanup {
     $ErrorActionPreference = 'SilentlyContinue'
     Stop-AllWatchers
     Stop-HeartbeatMonitor
-    if ($script:KeepAlive -and $script:Config.WslPath) {
-        Write-Log "Cleaning up containers (KeepAlive mode)..."
+    if ($script:Indefinite) {
+        Write-Log "Indefinite mode - containers will keep running."
+    } elseif ($script:Config.WslPath) {
+        Write-Log "Stopping containers and heartbeat processes..."
+        Stop-WslHeartbeats
         Invoke-Make "down"
     }
     Write-Log "Script exiting" -Silent
@@ -689,7 +918,6 @@ Initialize-Logging
 
 if ($GUI) {
     $script:IsGuiMode = $true
-    # launch the GUI version
     $guiScript = Join-Path $PSScriptRoot "launcher-gui.ps1"
     if (Test-Path $guiScript) {
         . $guiScript

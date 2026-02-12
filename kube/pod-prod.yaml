@@ -35,5 +35,5 @@ spec:
   volumes:
     - name: heartbeat-script-file
       hostPath:
-        path: /home/lvandee/Research-AI/kube/surf-heartbeat.sh
+        path: /etc/research-ai/surf-heartbeat.sh
         type: File

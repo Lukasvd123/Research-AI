@@ -1,0 +1,26 @@
+reserachaiub.researchai.src.surf-hosted.nl {
+	tls /etc/letsencrypt/live/reserachaiub.researchai.src.surf-hosted.nl/fullchain.pem /etc/letsencrypt/live/reserachaiub.researchai.src.surf-hosted.nl/privkey.pem
+
+	# Heartbeat endpoint for watchdog
+	handle /heartbeat {
+		reverse_proxy 127.0.0.1:9100
+	}
+
+	# GitHub webhook
+	handle /github-webhook* {
+		reverse_proxy 127.0.0.1:9000
+	}
+
+	# Backend API - strip /researchai-api prefix
+	handle_path /researchai-api/* {
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Frontend - strip /researchai prefix
+	handle_path /researchai/* {
+		reverse_proxy 127.0.0.1:3000
+	}
+
+	# Redirect /researchai to /researchai/
+	redir /researchai /researchai/ permanent
+}

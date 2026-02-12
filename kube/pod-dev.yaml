@@ -99,5 +99,16 @@ spec:
 
     - name: caddyfile-dev
       hostPath:
-        path: ./caddy/Caddyfile.dev
+        path: ./kube/Caddyfile.dev
         type: File
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: research-ai-modules-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi

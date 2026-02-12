@@ -72,6 +72,9 @@ Add-Type -AssemblyName WindowsBase
             <Button Name="btnResume" Content="Resume"/>
             <Button Name="btnStopAll" Content="Stop All" />
             <Button Name="btnBrowser" Content="Open Browser"/>
+            <CheckBox Name="chkIndefinite" Content="Run indefinitely (survive after close)"
+                      Foreground="#cdd6f4" Margin="12,0,0,0" VerticalAlignment="Center"
+                      FontFamily="Segoe UI" FontSize="12"/>
         </WrapPanel>
 
         <!-- Action buttons -->
@@ -84,18 +87,19 @@ Add-Type -AssemblyName WindowsBase
             <Button Name="btnWatchFE" Content="Watch FE: OFF" FontSize="11"/>
         </WrapPanel>
 
-        <!-- Log output -->
-        <TextBox Grid.Row="4" Name="txtLog"
-                 IsReadOnly="True"
-                 VerticalScrollBarVisibility="Auto"
-                 HorizontalScrollBarVisibility="Auto"
-                 FontFamily="Cascadia Mono,Consolas,Courier New"
-                 FontSize="12"
-                 Background="#11111b"
-                 Foreground="#a6adc8"
-                 BorderBrush="#45475a"
-                 TextWrapping="Wrap"
-                 Margin="0,0,0,8"/>
+        <!-- Log output (RichTextBox for colored log lines) -->
+        <RichTextBox Grid.Row="4" Name="txtLog"
+                     IsReadOnly="True"
+                     VerticalScrollBarVisibility="Auto"
+                     HorizontalScrollBarVisibility="Auto"
+                     FontFamily="Cascadia Mono,Consolas,Courier New"
+                     FontSize="12"
+                     Background="#11111b"
+                     Foreground="#a6adc8"
+                     BorderBrush="#45475a"
+                     Margin="0,0,0,8">
+            <FlowDocument Name="logDoc" PageWidth="5000"/>
+        </RichTextBox>
 
         <!-- URLs bar -->
         <StackPanel Grid.Row="5" Orientation="Horizontal">
@@ -117,23 +121,67 @@ $window = [Windows.Markup.XamlReader]::Load($reader)
 
 $ui = @{}
 @(
-    "txtLog", "txtAppUrl", "txtApiUrl",
+    "txtLog", "logDoc", "txtAppUrl", "txtApiUrl",
     "indHeartbeat", "indCaddy", "indFrontend", "indBackend",
     "btnFullStack", "btnResume", "btnStopAll", "btnBrowser",
     "btnRestartFE", "btnRestartBE", "btnRebuild",
-    "btnHealthCheck", "btnWatchBE", "btnWatchFE"
+    "btnHealthCheck", "btnWatchBE", "btnWatchFE",
+    "chkIndefinite"
 ) | ForEach-Object { $ui[$_] = $window.FindName($_) }
 
 $cfg = $script:Config
 $ui.txtAppUrl.Text = "http://localhost:$($cfg.CaddyPort)/researchai/"
 $ui.txtApiUrl.Text = "http://localhost:$($cfg.CaddyPort)/researchai-api/health"
 
+# -- Color map for log levels ------------------------------------------------
+
+$script:GuiLogColors = @{
+    "error" = "#f38ba8"
+    "warn"  = "#f9e2af"
+    "debug" = "#6c7086"
+    "info"  = "#a6adc8"
+}
+
 # -- GUI helpers -------------------------------------------------------------
 
-function Append-Log {
-    param([string]$Text)
+function Append-FormattedLog {
+    param([string]$RawText)
     $ui.txtLog.Dispatcher.Invoke([action]{
-        $ui.txtLog.AppendText("$Text`r`n")
+        $formatted = Format-LogLine $RawText
+        if ($null -eq $formatted) { return }
+
+        $level = Get-LogLevel $formatted
+        $color = $script:GuiLogColors[$level]
+        if (-not $color) { $color = "#a6adc8" }
+
+        $paragraph = New-Object System.Windows.Documents.Paragraph
+        $paragraph.Margin = [System.Windows.Thickness]::new(0)
+        $paragraph.LineHeight = 1
+
+        $run = New-Object System.Windows.Documents.Run
+        $run.Text = $formatted
+        $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($color)
+
+        $paragraph.Inlines.Add($run)
+        $ui.logDoc.Blocks.Add($paragraph)
+        $ui.txtLog.ScrollToEnd()
+    })
+    Write-Log $RawText -Silent
+}
+
+function Append-PlainLog {
+    param([string]$Text, [string]$Color = "#89b4fa")
+    $ui.txtLog.Dispatcher.Invoke([action]{
+        $paragraph = New-Object System.Windows.Documents.Paragraph
+        $paragraph.Margin = [System.Windows.Thickness]::new(0)
+        $paragraph.LineHeight = 1
+
+        $run = New-Object System.Windows.Documents.Run
+        $run.Text = $Text
+        $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString($Color)
+
+        $paragraph.Inlines.Add($run)
+        $ui.logDoc.Blocks.Add($paragraph)
         $ui.txtLog.ScrollToEnd()
     })
     Write-Log $Text -Silent
@@ -161,19 +209,27 @@ function Set-ButtonsEnabled {
 # green=#a6e3a1, red=#f38ba8, grey=#6c7086, yellow=#f9e2af
 function Update-Indicators {
     $podName = $cfg.PodName
-    $containers = @{
-        Heartbeat = "$podName-surf-heartbeat"
-        Caddy     = "$podName-caddy"
-        Frontend  = "$podName-frontend"
-        Backend   = "$podName-api"
+    $result = Invoke-WslCapture "for c in surf-heartbeat caddy frontend api; do r=`$(podman inspect --format '{{.State.Running}}' '$podName-'`$c 2>/dev/null || echo false); echo `$c=`$r; done"
+    $states = @{}
+    foreach ($ln in $result) {
+        if ($ln -match '^(\S+)=(.+)$') {
+            $states[$Matches[1].Trim()] = $Matches[2].Trim()
+        }
     }
-    foreach ($name in $containers.Keys) {
-        $ctr = $containers[$name]
-        $running = wsl bash -c "podman inspect --format '{{.State.Running}}' $ctr 2>/dev/null"
-        if ($LASTEXITCODE -eq 0 -and $running -match "true") {
-            Set-Indicator $name "#a6e3a1"
+
+    $nameMap = @{
+        "surf-heartbeat" = "Heartbeat"
+        "caddy"          = "Caddy"
+        "frontend"       = "Frontend"
+        "api"            = "Backend"
+    }
+
+    foreach ($key in $nameMap.Keys) {
+        $running = $states[$key]
+        if ($running -match "true") {
+            Set-Indicator $nameMap[$key] "#a6e3a1"
         } else {
-            Set-Indicator $name "#6c7086"
+            Set-Indicator $nameMap[$key] "#6c7086"
         }
     }
 }
@@ -181,85 +237,90 @@ function Update-Indicators {
 function Invoke-MakeGui {
     param([string]$Target)
     $wslPath = $script:Config.WslPath
-    # Redirect stderr→stdout inside bash to avoid PowerShell ErrorRecords
-    $output = wsl bash -c "cd '$wslPath' && make $Target 2>&1"
-    $exitCode = $LASTEXITCODE
-    foreach ($line in $output) {
-        Append-Log "$line"
+    $cmd = "cd '$wslPath' && make $Target 2>&1"
+
+    $exitCode = Invoke-WslStream -Command $cmd -OnLine {
+        param($line)
+        Append-FormattedLog $line
     }
+
     return $exitCode
 }
 
 # -- Button handlers ---------------------------------------------------------
 
 $ui.btnFullStack.Add_Click({
-    Append-Log "Starting full stack (make up)..."
+    Append-PlainLog ">>> Starting full stack (make up)..."
     Invoke-MakeGui "up"
     Start-Sleep -Seconds 3
+    Update-ContainerIdMap
     Update-Indicators
-    Append-Log "Full stack started."
+    Append-PlainLog ">>> Full stack started."
 })
 
 $ui.btnResume.Add_Click({
-    Append-Log "Resuming pod (make resume)..."
+    Append-PlainLog ">>> Resuming pod (make resume)..."
     Invoke-MakeGui "resume"
     Start-Sleep -Seconds 2
+    Update-ContainerIdMap
     Update-Indicators
-    Append-Log "Resume complete."
+    Append-PlainLog ">>> Resume complete."
 })
 
 $ui.btnStopAll.Add_Click({
-    Append-Log "Stopping all (make down)..."
+    Append-PlainLog ">>> Stopping all (make down)..."
     Stop-AllWatchers
+    Stop-WslHeartbeats
     Invoke-MakeGui "down"
     Update-Indicators
-    Append-Log "All stopped."
+    Append-PlainLog ">>> All stopped."
 })
 
 $ui.btnBrowser.Add_Click({
     $url = "http://localhost:$($cfg.CaddyPort)/researchai/"
     Start-Process $url
-    Append-Log "Opened browser: $url"
+    Append-PlainLog ">>> Opened browser: $url"
 })
 
 $ui.btnRestartFE.Add_Click({
     Invoke-MakeGui "restart-ui"
-    Append-Log "Frontend restarted."
+    Append-PlainLog ">>> Frontend restarted."
     Update-Indicators
 })
 
 $ui.btnRestartBE.Add_Click({
     Invoke-MakeGui "restart-api"
-    Append-Log "Backend restarted."
+    Append-PlainLog ">>> Backend restarted."
     Update-Indicators
 })
 
 $ui.btnRebuild.Add_Click({
-    Append-Log "Rebuilding all (make rebuild)..."
+    Append-PlainLog ">>> Rebuilding all (make rebuild)..."
     Invoke-MakeGui "rebuild"
+    Update-ContainerIdMap
     Update-Indicators
-    Append-Log "Rebuild complete."
+    Append-PlainLog ">>> Rebuild complete."
 })
 
 $ui.btnHealthCheck.Add_Click({
-    Append-Log "Running health check..."
+    Append-PlainLog ">>> Running health check..."
     $result = Test-ServiceHealth
-    if ($result) { Append-Log "All healthy!" }
-    else { Append-Log "Some checks failed." }
+    if ($result) { Append-PlainLog ">>> All healthy!" }
+    else { Append-PlainLog ">>> Some checks failed." -Color "#f38ba8" }
 })
 
 $ui.btnWatchBE.Add_Click({
     if ($script:WatcherJobs.ContainsKey("backend")) {
         Stop-FileWatcher -Name "backend"
         $ui.btnWatchBE.Content = "Watch BE: OFF"
-        Append-Log "Backend auto-reload disabled."
+        Append-PlainLog ">>> Backend auto-reload disabled."
     } else {
         Start-FileWatcher -Name "backend" `
             -WatchPath (Join-Path $cfg.ScriptDir "backend") `
             -Extensions @("*.py") `
             -MakeTarget "restart-api"
         $ui.btnWatchBE.Content = "Watch BE: ON"
-        Append-Log "Backend auto-reload enabled."
+        Append-PlainLog ">>> Backend auto-reload enabled."
     }
 })
 
@@ -267,14 +328,14 @@ $ui.btnWatchFE.Add_Click({
     if ($script:WatcherJobs.ContainsKey("frontend")) {
         Stop-FileWatcher -Name "frontend"
         $ui.btnWatchFE.Content = "Watch FE: OFF"
-        Append-Log "Frontend auto-reload disabled."
+        Append-PlainLog ">>> Frontend auto-reload disabled."
     } else {
         Start-FileWatcher -Name "frontend" `
             -WatchPath (Join-Path $cfg.ScriptDir "frontend") `
             -Extensions @("*.ts", "*.tsx", "*.css", "*.html") `
             -MakeTarget "restart-ui"
         $ui.btnWatchFE.Content = "Watch FE: ON"
-        Append-Log "Frontend auto-reload enabled."
+        Append-PlainLog ">>> Frontend auto-reload enabled."
     }
 })
 
@@ -285,18 +346,30 @@ $ui.txtApiUrl.Add_MouseLeftButtonUp({ Start-Process $ui.txtApiUrl.Text })
 # -- Heartbeat monitor (GUI version) ----------------------------------------
 
 $guiHeartbeatTimer = New-Object System.Windows.Threading.DispatcherTimer
-$guiHeartbeatTimer.Interval = [TimeSpan]::FromSeconds(60)
+$guiHeartbeatTimer.Interval = [TimeSpan]::FromSeconds(35)
 $guiHeartbeatTimer.Add_Tick({
-    # --- Heartbeat check (with grace period, no auto-kill) ---
+    if ($guiHeartbeatTimer.Interval.TotalSeconds -lt 60) {
+        $guiHeartbeatTimer.Interval = [TimeSpan]::FromSeconds(60)
+    }
+
+    $port = $cfg.CaddyPort
     $ctrName = "$($cfg.PodName)-surf-heartbeat"
-    $result = wsl bash -c "podman inspect --format '{{.State.Running}}' $ctrName 2>/dev/null"
-    if ($LASTEXITCODE -ne 0 -or $result -notmatch "true") {
+    $result = Invoke-WslCapture "echo HB=`$(podman inspect --format '{{.State.Running}}' $ctrName 2>/dev/null || echo false); echo FE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null); echo BE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null)"
+
+    $hbOk = $false; $feCode = "000"; $beCode = "000"
+    foreach ($ln in $result) {
+        if ($ln -match '^HB=(.+)') { $hbOk = $Matches[1] -match "true" }
+        if ($ln -match '^FE=(\d+)') { $feCode = $Matches[1] }
+        if ($ln -match '^BE=(\d+)') { $beCode = $Matches[1] }
+    }
+
+    if (-not $hbOk) {
         $script:HeartbeatFailCount++
         if ($script:HeartbeatFailCount -ge 3) {
             $script:HeartbeatWarning = $true
             Set-Indicator "Heartbeat" "#f38ba8"
         } else {
-            Set-Indicator "Heartbeat" "#f9e2af"  # yellow = starting/unstable
+            Set-Indicator "Heartbeat" "#f9e2af"
         }
     } else {
         $script:HeartbeatFailCount = 0
@@ -304,12 +377,10 @@ $guiHeartbeatTimer.Add_Tick({
         Set-Indicator "Heartbeat" "#a6e3a1"
     }
 
-    # --- Periodic health check (via WSL curl for reliable podman access) ---
-    $port = $cfg.CaddyPort
-    $feCode = wsl bash -c "curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null" 2>$null
-    $beCode = wsl bash -c "curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null" 2>$null
-    $script:HealthFrontend  = if ("$feCode" -match "^[23]") { "OK" } else { "DOWN" }
-    $script:HealthBackend   = if ("$beCode" -match "^[23]") { "OK" } else { "DOWN" }
+    $feOk = "$feCode" -match "^[23]"
+    $beOk = "$beCode" -match "^[23]"
+    $script:HealthFrontend  = if ($feOk) { "OK" } else { "DOWN" }
+    $script:HealthBackend   = if ($beOk) { "OK" } else { "DOWN" }
     $script:HealthLastCheck = Get-Date -Format "HH:mm:ss"
 
     Update-Indicators
@@ -317,23 +388,30 @@ $guiHeartbeatTimer.Add_Tick({
 
 # -- Initialize and show ----------------------------------------------------
 
-# Wire up the log callback so Write-Log calls from shared functions
-# (like Ensure-Prerequisites) also appear in the GUI TextBox
 $script:LogCallback = {
     param([string]$Text)
     $ui.txtLog.Dispatcher.Invoke([action]{
-        $ui.txtLog.AppendText("$Text`r`n")
+        $paragraph = New-Object System.Windows.Documents.Paragraph
+        $paragraph.Margin = [System.Windows.Thickness]::new(0)
+        $paragraph.LineHeight = 1
+
+        $run = New-Object System.Windows.Documents.Run
+        $run.Text = $Text
+        $run.Foreground = [System.Windows.Media.BrushConverter]::new().ConvertFromString("#89b4fa")
+
+        $paragraph.Inlines.Add($run)
+        $ui.logDoc.Blocks.Add($paragraph)
         $ui.txtLog.ScrollToEnd()
     })
 }
 
-Append-Log "Checking prerequisites..."
+Append-PlainLog "Checking prerequisites..."
 try {
     Ensure-Prerequisites
-    Append-Log "All prerequisites satisfied - ready to launch."
+    Append-PlainLog "All prerequisites satisfied - ready to launch."
 } catch {
-    Append-Log "ERROR: $_"
-    Append-Log "Fix the issue above and restart the launcher."
+    Append-PlainLog "ERROR: $_" -Color "#f38ba8"
+    Append-PlainLog "Fix the issue above and restart the launcher."
 }
 
 Update-Indicators
@@ -343,7 +421,17 @@ $guiHeartbeatTimer.Start()
 $window.Add_Closing({
     $guiHeartbeatTimer.Stop()
     Stop-AllWatchers
-    Append-Log "Window closing."
+    $isIndefinite = $ui.chkIndefinite.IsChecked
+    if (-not $isIndefinite -and $script:Config.WslPath) {
+        Write-Log "Stopping containers and heartbeat processes..."
+        Stop-WslHeartbeats
+        $wslPath = $script:Config.WslPath
+        Invoke-WslCapture "cd '$wslPath' && make down 2>&1" | Out-Null
+        Write-Log "Containers stopped."
+    } elseif ($isIndefinite) {
+        Write-Log "Indefinite mode - containers will keep running."
+    }
+    Write-Log "Window closing."
 })
 
 $window.ShowDialog() | Out-Null
