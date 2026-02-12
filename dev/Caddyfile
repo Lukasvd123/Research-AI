@@ -1,0 +1,15 @@
+:80 {
+    # Backend API - strip /researchai-api prefix
+    # Uses host gateway so containers behave like separate servers
+    handle_path /researchai-api/* {
+        reverse_proxy host.containers.internal:8000
+    }
+
+    # Frontend - keep /researchai prefix (Vite serves under base=/researchai/)
+    handle /researchai/* {
+        reverse_proxy host.containers.internal:5173
+    }
+
+    # Redirect /researchai to /researchai/
+    redir /researchai /researchai/ permanent
+}

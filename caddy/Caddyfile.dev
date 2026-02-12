@@ -1,0 +1,11 @@
+:80 {
+    handle_path /researchai-api/* {
+        reverse_proxy localhost:8000
+    }
+
+    handle /researchai/* {
+        reverse_proxy localhost:5173
+    }
+
+    redir /researchai /researchai/ permanent
+}
