@@ -20,11 +20,20 @@ jobs:
       issues: write
       id-token: write
     steps:
-      - uses: anthropics/claude-code-action@v1
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           claude_args: "--model claude-sonnet-4-5-20250929"
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             You are a senior code reviewer for Research-AI, a full-stack web application
             with a Python backend and TypeScript/React frontend, deployed via Podman containers.
 
@@ -35,5 +44,8 @@ jobs:
             - Verify the changes match the PR description
             - If something is unclear, ask the author for clarification
             - Be constructive and specific - suggest fixes, not just problems
+
+            Note: The PR branch is already checked out in the current working directory.
+            Use `gh pr diff` to see the changes, and `gh pr view` for PR details.
 
             Keep the review concise. Only comment on things that matter.
