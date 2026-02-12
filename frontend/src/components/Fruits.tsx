@@ -107,7 +107,7 @@ const FruitList = () => {
       ) : (
         <ul className="fruit-list">
           {fruits.map((fruit, index) => (
-            <li key={index}>{fruit.name}</li>
+            <li key={index} dangerouslySetInnerHTML={{ __html: fruit.name }} />
           ))}
         </ul>
       )}
