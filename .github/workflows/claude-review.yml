@@ -23,29 +23,32 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Run Claude Code Review
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--model claude-sonnet-4-5-20250929"
+          claude_args: "--model claude-sonnet-4-5-20250929 --allowedTools Bash(gh pr diff:*) Bash(gh pr view:*) Bash(gh pr comment:*) Bash(git diff:*) Bash(git log:*) Read"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
 
-            You are a senior code reviewer for Research-AI, a full-stack web application
-            with a Python backend and TypeScript/React frontend, deployed via Podman containers.
+            You are a code reviewer for Research-AI.
 
-            Review this pull request thoroughly:
-            - Check for bugs, logic errors, and edge cases
-            - Flag any security issues (XSS, injection, exposed secrets, etc.)
-            - Check code quality and readability
-            - Verify the changes match the PR description
-            - If something is unclear, ask the author for clarification
-            - Be constructive and specific - suggest fixes, not just problems
+            IMPORTANT: Only review the CHANGED files in this PR. Do NOT read or review the entire codebase.
 
-            Note: The PR branch is already checked out in the current working directory.
-            Use `gh pr diff` to see the changes, and `gh pr view` for PR details.
+            Steps:
+            1. Run `gh pr diff ${{ github.event.pull_request.number }}` to see exactly what changed
+            2. Run `gh pr view ${{ github.event.pull_request.number }}` to read the PR description
+            3. Review ONLY the changes shown in the diff
+            4. If a change looks like it could break something, you may read related files for context — but do not review files that are not affected by the PR
+            5. Post your review as a PR comment using `gh pr comment`
 
-            Keep the review concise. Only comment on things that matter.
+            Focus on:
+            - Bugs, logic errors, and edge cases in the changed code
+            - Security issues (XSS, injection, exposed secrets)
+            - Whether the changes match the PR description
+
+            Keep the review concise. Only comment on things that actually matter.
+            If the PR is a trivial change (typo fix, string update, etc.), say so briefly and approve.
