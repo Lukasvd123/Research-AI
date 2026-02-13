@@ -25,6 +25,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from routers import connections
+app.include_router(connections.router)
+
 memory_db = {"fruits": []}
 
 @app.get("/health")
