@@ -5,9 +5,9 @@ from collections import defaultdict
 from fastapi import APIRouter, Header, Request
 from fastapi.responses import JSONResponse
 
-from auth.config import ACCESS_TOKEN_EXPIRE_SECONDS, OAUTH_CREDENTIALS
-from auth.jwt_handler import create_access_token, create_refresh_token, decode_token
-from auth.models import TokenResponse
+from shared.auth.config import ACCESS_TOKEN_EXPIRE_SECONDS, OAUTH_CREDENTIALS
+from shared.auth.jwt_handler import create_access_token, create_refresh_token, decode_token
+from shared.auth.models import TokenResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 

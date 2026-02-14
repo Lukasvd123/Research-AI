@@ -276,6 +276,9 @@ __marimo__/
 kube/env.yaml
 .caddy/
 
+# Generated at container start with auth credentials (frontend/entrypoint.sh)
+frontend/public/runtime-config.js
+
 ################################################################################
 # OS files
 ################################################################################

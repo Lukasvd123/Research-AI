@@ -8,6 +8,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 AI_DIR="$(dirname "$SCRIPT_DIR")"
+REPO_DIR="$(dirname "$AI_DIR")"
+export PYTHONPATH="${REPO_DIR}:${PYTHONPATH:-}"
 RUN_DIR="/run/user/$(id -u)/research-ai"
 mkdir -p "$RUN_DIR"
 

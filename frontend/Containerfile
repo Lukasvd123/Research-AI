@@ -11,3 +11,6 @@ RUN npm run build -- --base=${VITE_BASE}
 FROM docker.io/library/caddy:2-alpine
 COPY kube/Caddyfile.prod /etc/caddy/Caddyfile
 COPY --from=build /src/dist /srv
+COPY frontend/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

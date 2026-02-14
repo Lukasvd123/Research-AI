@@ -2,7 +2,7 @@ import time
 
 import jwt
 
-from auth.config import (
+from shared.auth.config import (
     ACCESS_TOKEN_EXPIRE_SECONDS,
     JWT_ALGORITHM,
     JWT_SECRET,

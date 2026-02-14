@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import api from '../api';
+import api, { getAuthError } from '../api';
 import AddFruitForm from './AddFruitForm';
 
 interface Fruit {
@@ -26,7 +26,7 @@ const FruitList = () => {
       setBackendError(null);
     } catch (error) {
       setHealth(null);
-      setBackendError('Cannot reach backend');
+      setBackendError(getAuthError() || 'Cannot reach backend');
     }
   };
 
@@ -38,7 +38,7 @@ const FruitList = () => {
       setLastAction(`Fetched ${response.data.fruits.length} fruit(s) from backend`);
     } catch (error) {
       console.error("Error fetching fruits", error);
-      setBackendError('Failed to fetch fruits');
+      setBackendError(getAuthError() || 'Failed to fetch fruits');
     }
   };
 
@@ -51,7 +51,7 @@ const FruitList = () => {
       checkHealth();
     } catch (error) {
       console.error("Error adding fruit", error);
-      setBackendError('Failed to add fruit');
+      setBackendError(getAuthError() || 'Failed to add fruit');
     }
   };
 
@@ -64,7 +64,7 @@ const FruitList = () => {
       checkHealth();
     } catch (error) {
       console.error("Error clearing fruits", error);
-      setBackendError('Failed to clear fruits');
+      setBackendError(getAuthError() || 'Failed to clear fruits');
     }
   };
 
