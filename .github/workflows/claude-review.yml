@@ -48,7 +48,10 @@ jobs:
             Focus on:
             - Bugs, logic errors, and edge cases in the changed code
             - Security issues (XSS, injection, exposed secrets)
+            - Syntax errors, typos, and incorrect imports in changed files
+            - Broken function calls (wrong arguments, missing parameters)
             - Whether the changes match the PR description
 
             Keep the review concise. Only comment on things that actually matter.
+            Do NOT review the entire codebase — only the PR diff.
             If the PR is a trivial change (typo fix, string update, etc.), say so briefly and approve.
