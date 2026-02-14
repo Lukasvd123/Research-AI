@@ -271,7 +271,7 @@ $ui.btnStopAll.Add_Click({
     Append-PlainLog ">>> Stopping all (make dev-down)..."
     Stop-AllWatchers
     Stop-WslHeartbeats
-    Invoke-MakeGui "down"
+    Invoke-MakeGui "dev-down"
     Update-Indicators
     Append-PlainLog ">>> All stopped."
 })

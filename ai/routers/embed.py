@@ -38,8 +38,12 @@ def _validate_body(body: dict) -> str | None:
 @router.post("/embed")
 async def embed(request: Request):
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_BODY_BYTES:
-        return JSONResponse(status_code=413, content={"error": "Payload too large"})
+    if content_length:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"error": "Payload too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Invalid Content-Length header"})
 
     try:
         body = await request.json()

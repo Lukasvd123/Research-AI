@@ -57,10 +57,15 @@ def _validate_body(body: dict) -> str | None:
 
 @router.post("/completions")
 async def chat_completions(request: Request):
-    # Check payload size
+    # Early reject based on Content-Length header (not a security boundary —
+    # the per-field validation below is the real guard).
     content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > MAX_BODY_BYTES:
-        return JSONResponse(status_code=413, content={"error": "Payload too large"})
+    if content_length:
+        try:
+            if int(content_length) > MAX_BODY_BYTES:
+                return JSONResponse(status_code=413, content={"error": "Payload too large"})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"error": "Invalid Content-Length header"})
 
     try:
         body = await request.json()
@@ -105,6 +110,9 @@ async def _stream_response(body: dict):
     async def event_generator():
         async with httpx.AsyncClient(timeout=120.0, verify=True) as client:
             async with client.stream("POST", CHAT_COMPLETIONS_URL, json=body) as resp:
+                if resp.status_code != 200:
+                    yield f'{{"error": "AI model returned status {resp.status_code}"}}\n\n'
+                    return
                 async for line in resp.aiter_lines():
                     if line:
                         yield f"{line}\n\n"
