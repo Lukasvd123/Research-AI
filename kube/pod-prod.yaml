@@ -4,17 +4,6 @@ metadata:
   name: research-ai-prod
 spec:
   containers:
-    - name: surf-heartbeat
-      image: docker.io/library/alpine:latest
-      envFrom:
-        - configMapRef:
-            name: research-ai-env
-      volumeMounts:
-        - name: heartbeat-script-file
-          mountPath: /scripts/surf-heartbeat.sh
-          readOnly: true
-      command: ["sh", "/scripts/surf-heartbeat.sh"]
-
     - name: api
       image: research-ai-backend:prod
       ports:
@@ -31,9 +20,3 @@ spec:
         - containerPort: 80
           hostPort: 3000
           hostIP: 127.0.0.1
-
-  volumes:
-    - name: heartbeat-script-file
-      hostPath:
-        path: /etc/research-ai/surf-heartbeat.sh
-        type: File

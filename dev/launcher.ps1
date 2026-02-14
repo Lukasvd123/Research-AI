@@ -671,9 +671,9 @@ function Show-MainMenu {
         0 {
             $script:Indefinite = (Show-LifetimeMenu)
             Write-Log "Starting full stack..."
-            $exitCode = Invoke-Make "up"
+            $exitCode = Invoke-Make "dev"
             if ($exitCode -ne 0) {
-                Write-Log "[ERROR] 'make up' failed (exit code $exitCode)"
+                Write-Log "[ERROR] 'make dev' failed (exit code $exitCode)"
                 Write-Host ""
                 Write-Host "  Failed to start the stack. Check the output above."
                 Write-Host "  Log file: $($script:Config.LogFile)"

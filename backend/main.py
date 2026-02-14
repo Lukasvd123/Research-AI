@@ -6,6 +6,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List
 
+from auth.router import router as auth_router
+
 class Fruit(BaseModel):
     name: str
 
@@ -24,6 +26,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
 
 memory_db = {"fruits": []}
 

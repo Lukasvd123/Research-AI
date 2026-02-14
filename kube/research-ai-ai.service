@@ -1,0 +1,17 @@
+[Unit]
+Description=Research-AI AI Service (llama-server + FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+User=lvandee
+Environment=LD_LIBRARY_PATH=/home/lvandee/llama.cpp/build/bin
+Environment=MODEL_DIR=/home/lvandee/models
+Environment=LLAMA_BIN=/home/lvandee/llama.cpp/build/bin
+ExecStart=/home/lvandee/Research-AI/ai/scripts/start-ai.sh
+ExecStop=/home/lvandee/Research-AI/ai/scripts/stop-ai.sh
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -250,8 +250,8 @@ function Invoke-MakeGui {
 # -- Button handlers ---------------------------------------------------------
 
 $ui.btnFullStack.Add_Click({
-    Append-PlainLog ">>> Starting full stack (make up)..."
-    Invoke-MakeGui "up"
+    Append-PlainLog ">>> Starting full stack (make dev)..."
+    Invoke-MakeGui "dev"
     Start-Sleep -Seconds 3
     Update-ContainerIdMap
     Update-Indicators

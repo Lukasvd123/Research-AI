@@ -1,8 +1,35 @@
 :80 {
-    handle_path /researchai-api/* {
+    # Public: Auth endpoint (needed to obtain tokens)
+    handle /researchai-api/auth/* {
+        uri strip_prefix /researchai-api
         reverse_proxy localhost:8000
     }
 
+    # Public: Health check
+    handle /researchai-api/health {
+        uri strip_prefix /researchai-api
+        reverse_proxy localhost:8000
+    }
+
+    # Protected: Backend API paths (forward_auth validates JWT)
+    handle_path /researchai-api/* {
+        forward_auth localhost:8000 {
+            uri /auth/validate
+            copy_headers X-Auth-User X-Auth-Scope
+        }
+        reverse_proxy localhost:8000
+    }
+
+    # Protected: Neo4j HTTP API (present for parity; devs configure NEO4J_HTTP_URL in env.yaml)
+    handle_path /researchai-neo4j/* {
+        forward_auth localhost:8000 {
+            uri /auth/validate
+            copy_headers X-Auth-User X-Auth-Scope
+        }
+        reverse_proxy localhost:7474
+    }
+
+    # Public: Frontend (Vite dev server)
     handle /researchai/* {
         reverse_proxy localhost:5173
     }
