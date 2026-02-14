@@ -27,6 +27,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from routers import connections
+app.include_router(connections.router)
 app.include_router(auth_router)
 
 memory_db = {"fruits": []}
