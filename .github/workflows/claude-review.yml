@@ -9,10 +9,12 @@ on:
 jobs:
   claude-review:
     if: >
-      (github.event_name == 'pull_request') ||
+      (github.event_name == 'pull_request' &&
+       contains(fromJSON('["Lukasvd123","Anou212","jandre-d","Strike6782","ThijmenLigter","TimonZ4","typ-o-relative","zop12345","jonnagit"]'), github.event.pull_request.user.login)) ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request &&
-       contains(github.event.comment.body, '@claude'))
+       contains(github.event.comment.body, '@claude') &&
+       contains(fromJSON('["Lukasvd123","Anou212","jandre-d","Strike6782","ThijmenLigter","TimonZ4","typ-o-relative","zop12345","jonnagit"]'), github.event.comment.user.login))
     runs-on: ubuntu-latest
     permissions:
       contents: read
