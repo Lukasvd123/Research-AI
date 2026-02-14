@@ -250,8 +250,8 @@ function Invoke-MakeGui {
 # -- Button handlers ---------------------------------------------------------
 
 $ui.btnFullStack.Add_Click({
-    Append-PlainLog ">>> Starting full stack (make up)..."
-    Invoke-MakeGui "up"
+    Append-PlainLog ">>> Starting full stack (make dev)..."
+    Invoke-MakeGui "dev"
     Start-Sleep -Seconds 3
     Update-ContainerIdMap
     Update-Indicators
@@ -268,10 +268,10 @@ $ui.btnResume.Add_Click({
 })
 
 $ui.btnStopAll.Add_Click({
-    Append-PlainLog ">>> Stopping all (make down)..."
+    Append-PlainLog ">>> Stopping all (make dev-down)..."
     Stop-AllWatchers
     Stop-WslHeartbeats
-    Invoke-MakeGui "down"
+    Invoke-MakeGui "dev-down"
     Update-Indicators
     Append-PlainLog ">>> All stopped."
 })
@@ -426,7 +426,7 @@ $window.Add_Closing({
         Write-Log "Stopping containers and heartbeat processes..."
         Stop-WslHeartbeats
         $wslPath = $script:Config.WslPath
-        Invoke-WslCapture "cd '$wslPath' && make down 2>&1" | Out-Null
+        Invoke-WslCapture "cd '$wslPath' && make dev-down 2>&1" | Out-Null
         Write-Log "Containers stopped."
     } elseif ($isIndefinite) {
         Write-Log "Indefinite mode - containers will keep running."
