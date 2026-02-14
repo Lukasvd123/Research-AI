@@ -14,7 +14,7 @@ class Fruit(BaseModel):
 class Fruits(BaseModel):
     fruits: List[Fruit]
 
-app = FastAPI(debug=True)
+app = FastAPI(debug=os.environ.get("FASTAPI_DEBUG", "").lower() in ("1", "true"))
 
 cors_env = os.environ.get("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
 origins = [o.strip() for o in cors_env.split(",")]
@@ -35,7 +35,7 @@ memory_db = {"fruits": []}
 def health():
     return {
         "status": "ok",
-        "service": "ReseachAI Bsd",
+        "service": "ResearchAI Backend",
         "time": datetime.now().isoformat(),
         "fruit_count": len(memory_db["fruits"]),
     }
