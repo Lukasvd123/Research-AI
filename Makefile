@@ -1,4 +1,4 @@
-.PHONY: check dev dev-down up down resume watch logs-api logs-ui logs-caddy logs-heartbeat \
+.PHONY: check dev dev-down resume watch logs-api logs-ui logs-caddy logs-heartbeat \
        restart-api restart-ui rebuild status health open \
        backend frontend \
        ai-start ai-stop ai-deploy ai-status ai-logs \
@@ -37,13 +37,9 @@ dev: check
 	@echo ""
 	@echo "Dev pod started.  http://localhost:8080/researchai/"
 
-up: dev
-
 dev-down:
 	@-podman pod rm -f $(DEV_POD) 2>/dev/null
 	@echo "Dev pod removed."
-
-down: dev-down
 
 resume:
 	@podman pod start $(DEV_POD)
@@ -88,8 +84,8 @@ status:
 	@podman ps -a --filter pod=$(DEV_POD) 2>/dev/null || true
 
 health:
-	@printf "Frontend: "; curl -sf -o /dev/null -w '%{http_code}\n' http://localhost:8080/researchai/ 2>/dev/null || echo "FAIL"
-	@printf "Backend:  "; curl -sf -o /dev/null -w '%{http_code}\n' http://localhost:8080/researchai-api/health 2>/dev/null || echo "FAIL"
+	@printf "Frontend: "; curl -sf --max-time 2 -o /dev/null -w '%{http_code}\n' http://localhost:8080/researchai/ 2>/dev/null || echo "FAIL"
+	@printf "Backend:  "; curl -sf --max-time 2 -o /dev/null -w '%{http_code}\n' http://localhost:8080/researchai-api/health 2>/dev/null || echo "FAIL"
 
 open:
 	xdg-open http://localhost:8080/researchai/
@@ -112,11 +108,11 @@ frontend: check
 
 ai-start:
 	@echo "Starting AI service..."
-	@/home/lvandee/Research-AI/ai/scripts/start-ai.sh
+	@$(CURDIR)/ai/scripts/start-ai.sh
 
 ai-stop:
 	@echo "Stopping AI service..."
-	@/home/lvandee/Research-AI/ai/scripts/stop-ai.sh
+	@$(CURDIR)/ai/scripts/stop-ai.sh
 
 ai-deploy:
 	@echo "---- Installing AI systemd service ----"
@@ -127,9 +123,9 @@ ai-deploy:
 	@echo "AI service deployed and started."
 
 ai-status:
-	@printf "FastAPI:     "; curl -sf -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8090/health 2>/dev/null || echo "FAIL"
-	@printf "Chat LLM:   "; curl -sf -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/health 2>/dev/null || echo "FAIL"
-	@printf "Embed LLM:  "; curl -sf -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8082/health 2>/dev/null || echo "FAIL"
+	@printf "FastAPI:     "; curl -sf --max-time 2 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8090/health 2>/dev/null || echo "FAIL"
+	@printf "Chat LLM:   "; curl -sf --max-time 2 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8081/health 2>/dev/null || echo "FAIL"
+	@printf "Embed LLM:  "; curl -sf --max-time 2 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8082/health 2>/dev/null || echo "FAIL"
 
 ai-logs:
 	journalctl -fu research-ai-ai.service

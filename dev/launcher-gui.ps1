@@ -268,7 +268,7 @@ $ui.btnResume.Add_Click({
 })
 
 $ui.btnStopAll.Add_Click({
-    Append-PlainLog ">>> Stopping all (make down)..."
+    Append-PlainLog ">>> Stopping all (make dev-down)..."
     Stop-AllWatchers
     Stop-WslHeartbeats
     Invoke-MakeGui "down"
@@ -426,7 +426,7 @@ $window.Add_Closing({
         Write-Log "Stopping containers and heartbeat processes..."
         Stop-WslHeartbeats
         $wslPath = $script:Config.WslPath
-        Invoke-WslCapture "cd '$wslPath' && make down 2>&1" | Out-Null
+        Invoke-WslCapture "cd '$wslPath' && make dev-down 2>&1" | Out-Null
         Write-Log "Containers stopped."
     } elseif ($isIndefinite) {
         Write-Log "Indefinite mode - containers will keep running."

@@ -690,7 +690,7 @@ function Show-MainMenu {
         }
         1 {
             Write-Log "Stopping all containers..."
-            Invoke-Make "down"
+            Invoke-Make "dev-down"
             Write-Log "All containers stopped."
             $script:CleanupDone = $true
         }
@@ -873,7 +873,7 @@ function Show-DevPanel {
                 Stop-AllWatchers
                 Stop-HeartbeatMonitor
                 Stop-WslHeartbeats
-                Invoke-Make "down"
+                Invoke-Make "dev-down"
                 $script:CleanupDone = $true
                 return
             }
@@ -896,7 +896,7 @@ function Invoke-Cleanup {
     } elseif ($script:Config.WslPath) {
         Write-Log "Stopping containers and heartbeat processes..."
         Stop-WslHeartbeats
-        Invoke-Make "down"
+        Invoke-Make "dev-down"
     }
     Write-Log "Script exiting" -Silent
     Write-Log "==========================================" -Silent
