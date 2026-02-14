@@ -89,6 +89,8 @@ async def chat_completions(request: Request):
 
 
 async def _proxy_response(body: dict):
+    # verify=True ensures TLS cert validation if CHAT_URL uses HTTPS.
+    # Do not set verify=False — it would allow MITM attacks.
     async with httpx.AsyncClient(timeout=120.0, verify=True) as client:
         resp = await client.post(CHAT_COMPLETIONS_URL, json=body)
         if resp.status_code != 200:

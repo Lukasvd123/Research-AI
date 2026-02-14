@@ -15,13 +15,23 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 _rate_window = 60  # seconds
 _rate_max = 10  # max attempts per window per IP
 _rate_store: dict[str, list[float]] = defaultdict(list)
+_rate_last_cleanup = 0.0
+_rate_cleanup_interval = 300  # full cleanup every 5 minutes
 
 
 def _is_rate_limited(client_ip: str) -> bool:
+    global _rate_last_cleanup
     now = time.monotonic()
-    attempts = _rate_store[client_ip]
-    # Prune expired entries
-    _rate_store[client_ip] = [t for t in attempts if now - t < _rate_window]
+
+    # Periodic full cleanup to prevent unbounded memory growth
+    if now - _rate_last_cleanup > _rate_cleanup_interval:
+        _rate_last_cleanup = now
+        stale = [ip for ip, ts in _rate_store.items() if not ts or now - ts[-1] > _rate_window]
+        for ip in stale:
+            del _rate_store[ip]
+
+    # Prune expired entries for this IP
+    _rate_store[client_ip] = [t for t in _rate_store[client_ip] if now - t < _rate_window]
     if len(_rate_store[client_ip]) >= _rate_max:
         return True
     _rate_store[client_ip].append(now)

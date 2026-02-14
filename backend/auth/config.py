@@ -1,6 +1,16 @@
 import os
+import sys
 
-JWT_SECRET = os.environ.get("JWT_SECRET", "change-me-in-production")
+_DEFAULT_SECRET = "change-me-in-production"
+
+JWT_SECRET = os.environ.get("JWT_SECRET", _DEFAULT_SECRET)
+if JWT_SECRET == _DEFAULT_SECRET:
+    print(
+        "WARNING: JWT_SECRET is not set or uses the default value. "
+        "Tokens are insecure. Set JWT_SECRET in env.yaml.",
+        file=sys.stderr,
+    )
+
 JWT_ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_SECONDS = 86400      # 1 day
 REFRESH_TOKEN_EXPIRE_SECONDS = 604800    # 7 days

@@ -116,10 +116,11 @@ ai-stop:
 
 ai-deploy:
 	@echo "---- Installing AI systemd service ----"
+	@test -f /opt/research-ai/ai.env || { echo "ERROR: /opt/research-ai/ai.env not found. Copy kube/ai.env.example and fill in paths."; exit 1; }
 	@sudo cp kube/research-ai-ai.service /etc/systemd/system/
 	@sudo systemctl daemon-reload
 	@sudo systemctl enable research-ai-ai.service
-	@sudo systemctl start research-ai-ai.service
+	@sudo systemctl restart research-ai-ai.service
 	@echo "AI service deployed and started."
 
 ai-status:
