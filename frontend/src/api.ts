@@ -1,23 +1,36 @@
+// Auth model:
+//   Production — entrypoint.sh authenticates server-side, runtime-config.js
+//                contains only tokens (never credentials). The browser can
+//                refresh tokens via the refresh_token grant (no credentials needed).
+//   Dev        — VITE_AUTH_USER/PASS from env, client_credentials in the browser.
+//                This is fine since dev is localhost only.
+
 import axios, { AxiosError } from 'axios';
 
 // Runtime config (injected in production) or Vite env (dev)
 const cfg = (window as any).__RUNTIME_CONFIG__ || {};
 const baseURL = cfg.VITE_API_URL || import.meta.env.VITE_API_URL || "http://localhost:8000";
-const authUser = cfg.VITE_AUTH_USER || import.meta.env.VITE_AUTH_USER || "";
-const authPass = cfg.VITE_AUTH_PASS || import.meta.env.VITE_AUTH_PASS || "";
+
+// Production: pre-fetched tokens from runtime-config (credentials stayed in container)
+// Dev: credentials from Vite env (localhost only)
+const authUser = import.meta.env.VITE_AUTH_USER || "";
+const authPass = import.meta.env.VITE_AUTH_PASS || "";
 
 const api = axios.create({ baseURL });
 
-let accessToken: string | null = null;
-let refreshToken: string | null = null;
+let accessToken: string | null = cfg.VITE_AUTH_TOKEN || null;
+let refreshToken: string | null = cfg.VITE_REFRESH_TOKEN || null;
 let authenticating: Promise<void> | null = null;
 let _authError: string | null = null;
+
+const hasAuth = !!accessToken || (!!authUser && !!authPass);
 
 /** Current auth error message, or null if auth is OK / not configured. */
 export function getAuthError(): string | null {
   return _authError;
 }
 
+/** Dev only: authenticate with client_credentials. */
 async function authenticate(): Promise<void> {
   if (!authUser || !authPass) return;
 
@@ -52,28 +65,37 @@ async function authenticate(): Promise<void> {
   }
 }
 
+/** Refresh using refresh_token grant (works without credentials). */
 async function refreshAuth(): Promise<void> {
-  if (!refreshToken) {
+  if (refreshToken) {
+    try {
+      const resp = await axios.post(`${baseURL}/auth/token`, {
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      });
+      accessToken = resp.data.access_token;
+      refreshToken = resp.data.refresh_token;
+      _authError = null;
+      return;
+    } catch {
+      // Refresh failed — fall through
+    }
+  }
+
+  // Dev: re-authenticate with credentials
+  if (authUser && authPass) {
     return authenticate();
   }
 
-  try {
-    const resp = await axios.post(`${baseURL}/auth/token`, {
-      grant_type: "refresh_token",
-      refresh_token: refreshToken,
-    });
-    accessToken = resp.data.access_token;
-    refreshToken = resp.data.refresh_token;
-    _authError = null;
-  } catch {
-    // Refresh failed — do full re-auth
-    return authenticate();
-  }
+  // Production: refresh failed and no credentials available
+  _authError = "Session expired — please reload the page";
+  accessToken = null;
+  refreshToken = null;
 }
 
 // Attach Bearer token to every request
 api.interceptors.request.use(async (config) => {
-  if (!authUser) return config; // No auth configured
+  if (!hasAuth) return config; // No auth configured
 
   if (!accessToken) {
     if (!authenticating) {
@@ -93,7 +115,7 @@ api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const original = error.config;
-    if (error.response?.status === 401 && !original._retried && authUser) {
+    if (error.response?.status === 401 && !original._retried && hasAuth) {
       original._retried = true;
       await refreshAuth();
       if (accessToken) {

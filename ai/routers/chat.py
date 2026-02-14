@@ -22,37 +22,38 @@ MAX_TOKENS_LIMIT = 8192
 TEMPERATURE_RANGE = (0.0, 2.0)
 
 
-def _validate_body(body: dict) -> str | None:
-    """Return an error message if the body is invalid, else None."""
+def _validate_body(body: dict) -> tuple[dict | None, str | None]:
+    """Validate and sanitize the request body.
+
+    Returns (cleaned_body, None) on success or (None, error_message) on failure.
+    """
     if not isinstance(body.get("messages"), list):
-        return "messages must be a list"
+        return None, "messages must be a list"
     if len(body["messages"]) > MAX_MESSAGES:
-        return f"too many messages (max {MAX_MESSAGES})"
+        return None, f"too many messages (max {MAX_MESSAGES})"
     for i, msg in enumerate(body["messages"]):
         if not isinstance(msg, dict):
-            return f"messages[{i}] must be an object"
+            return None, f"messages[{i}] must be an object"
         content = msg.get("content", "")
         if isinstance(content, str) and len(content) > MAX_MESSAGE_CHARS:
-            return f"messages[{i}].content exceeds {MAX_MESSAGE_CHARS} characters"
+            return None, f"messages[{i}].content exceeds {MAX_MESSAGE_CHARS} characters"
     if "max_tokens" in body:
         try:
             mt = int(body["max_tokens"])
         except (TypeError, ValueError):
-            return "max_tokens must be an integer"
+            return None, "max_tokens must be an integer"
         if mt < 1 or mt > MAX_TOKENS_LIMIT:
-            return f"max_tokens must be between 1 and {MAX_TOKENS_LIMIT}"
+            return None, f"max_tokens must be between 1 and {MAX_TOKENS_LIMIT}"
     if "temperature" in body:
         try:
             t = float(body["temperature"])
         except (TypeError, ValueError):
-            return "temperature must be a number"
+            return None, "temperature must be a number"
         if t < TEMPERATURE_RANGE[0] or t > TEMPERATURE_RANGE[1]:
-            return f"temperature must be between {TEMPERATURE_RANGE[0]} and {TEMPERATURE_RANGE[1]}"
+            return None, f"temperature must be between {TEMPERATURE_RANGE[0]} and {TEMPERATURE_RANGE[1]}"
     # Strip unknown parameters before forwarding
-    unknown = set(body.keys()) - ALLOWED_PARAMS
-    for key in unknown:
-        del body[key]
-    return None
+    cleaned = {k: v for k, v in body.items() if k in ALLOWED_PARAMS}
+    return cleaned, None
 
 
 @router.post("/completions")
@@ -72,16 +73,16 @@ async def chat_completions(request: Request):
     except Exception:
         return JSONResponse(status_code=400, content={"error": "Invalid JSON body"})
 
-    error = _validate_body(body)
+    cleaned, error = _validate_body(body)
     if error:
         return JSONResponse(status_code=422, content={"error": error})
 
-    stream = body.get("stream", False)
+    stream = cleaned.get("stream", False)
 
     try:
         if stream:
-            return await _stream_response(body)
-        return await _proxy_response(body)
+            return await _stream_response(cleaned)
+        return await _proxy_response(cleaned)
     except httpx.ConnectError:
         logger.error("Cannot connect to llama-server at %s", CHAT_COMPLETIONS_URL)
         return JSONResponse(status_code=502, content={"error": "AI model is unavailable"})

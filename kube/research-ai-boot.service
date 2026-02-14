@@ -6,6 +6,7 @@ ConditionPathExists=!/run/research-ai-boot-triggered
 
 [Service]
 Type=oneshot
+# Change to the user that owns the Research-AI repo checkout
 User=lvandee
 ExecStartPre=/bin/sleep 10
 ExecStart=/usr/bin/curl -sS -X POST http://127.0.0.1:9000/github-webhook \

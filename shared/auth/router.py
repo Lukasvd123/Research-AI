@@ -32,10 +32,11 @@ def _is_rate_limited(client_ip: str) -> bool:
 
     # Prune expired entries for this IP
     _rate_store[client_ip] = [t for t in _rate_store[client_ip] if now - t < _rate_window]
-    if len(_rate_store[client_ip]) >= _rate_max:
-        return True
-    _rate_store[client_ip].append(now)
-    return False
+    return len(_rate_store[client_ip]) >= _rate_max
+
+
+def _record_failure(client_ip: str) -> None:
+    _rate_store[client_ip].append(time.monotonic())
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -63,6 +64,7 @@ async def token(request: Request):
 
         expected = OAUTH_CREDENTIALS.get(username)
         if expected is None or not secrets.compare_digest(expected, password):
+            _record_failure(client_ip)
             return JSONResponse(
                 status_code=401,
                 content={"error": "invalid_client", "error_description": "Bad credentials"},
@@ -82,6 +84,7 @@ async def token(request: Request):
                 raise ValueError("not a refresh token")
             subject = payload["sub"]
         except Exception:
+            _record_failure(client_ip)
             return JSONResponse(
                 status_code=401,
                 content={"error": "invalid_grant", "error_description": "Invalid refresh token"},

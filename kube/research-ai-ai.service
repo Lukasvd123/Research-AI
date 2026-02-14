@@ -4,6 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
+# Change to the user that owns the Research-AI repo checkout
 User=lvandee
 # All paths are configured here — change these for different deployments
 EnvironmentFile=-/opt/research-ai/ai.env
