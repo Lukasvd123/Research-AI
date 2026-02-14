@@ -1,4 +1,5 @@
-.PHONY: check dev dev-down resume watch logs-api logs-ui logs-caddy logs-heartbeat \
+.PHONY: check heartbeat heartbeat-down logs-heartbeat-standalone \
+       dev dev-down resume watch logs-api logs-ui logs-caddy logs-heartbeat \
        restart-api restart-ui rebuild status health open \
        backend frontend \
        ai-start ai-stop ai-deploy ai-status ai-logs \
@@ -24,6 +25,29 @@ BUNDLE_DEST := /etc/research-ai/bundle.yaml
 check:
 	@command -v podman >/dev/null 2>&1 || { echo "ERROR: podman not found in PATH"; exit 1; }
 	@echo "podman $$(podman --version | awk '{print $$3}') is available"
+
+heartbeat: check
+	@-podman rm -f research-ai-heartbeat 2>/dev/null
+	@echo "Loading env and starting heartbeat container..."
+	@VD_SURF_USER=$$(grep 'VD_SURF_USER' kube/env.yaml | head -1 | sed 's/.*: *"//;s/"//'); \
+	 VD_SURF_PASS=$$(grep 'VD_SURF_PASS' kube/env.yaml | head -1 | sed 's/.*: *"//;s/"//'); \
+	 podman run -d --name research-ai-heartbeat \
+	   -e VD_SURF_USER="$$VD_SURF_USER" \
+	   -e VD_SURF_PASS="$$VD_SURF_PASS" \
+	   -v ./kube/surf-heartbeat.sh:/scripts/surf-heartbeat.sh:ro \
+	   docker.io/library/alpine:latest \
+	   sh -c 'tr -d "\r" < /scripts/surf-heartbeat.sh | sh'
+	@echo ""
+	@echo "Heartbeat container started in background."
+	@echo "  Logs:  make logs-heartbeat-standalone"
+	@echo "  Stop:  make heartbeat-down"
+
+heartbeat-down:
+	@-podman rm -f research-ai-heartbeat 2>/dev/null
+	@echo "Heartbeat container removed."
+
+logs-heartbeat-standalone:
+	@podman logs -f research-ai-heartbeat
 
 dev: check
 	@podman pod rm -f $(DEV_POD) 2>/dev/null || true
