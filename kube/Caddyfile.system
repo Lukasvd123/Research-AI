@@ -1,22 +1,56 @@
 reserachaiub.researchai.src.surf-hosted.nl {
 	tls /etc/letsencrypt/live/reserachaiub.researchai.src.surf-hosted.nl/fullchain.pem /etc/letsencrypt/live/reserachaiub.researchai.src.surf-hosted.nl/privkey.pem
 
-	# Heartbeat endpoint for watchdog
+	# Public: Heartbeat endpoint for watchdog
 	handle /heartbeat {
 		reverse_proxy 127.0.0.1:9100
 	}
 
-	# GitHub webhook
+	# Public: GitHub webhook
 	handle /github-webhook* {
 		reverse_proxy 127.0.0.1:9000
 	}
 
-	# Backend API - strip /researchai-api prefix
-	handle_path /researchai-api/* {
+	# Public: Auth endpoint (needed to obtain tokens)
+	handle /researchai-api/auth/* {
+		uri strip_prefix /researchai-api
 		reverse_proxy 127.0.0.1:8000
 	}
 
-	# Frontend - strip /researchai prefix
+	# Public: Health check
+	handle /researchai-api/health {
+		uri strip_prefix /researchai-api
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Protected: Backend API paths (forward_auth validates JWT)
+	handle_path /researchai-api/* {
+		forward_auth 127.0.0.1:8000 {
+			uri /auth/validate
+			copy_headers X-Auth-User X-Auth-Scope
+		}
+		reverse_proxy 127.0.0.1:8000
+	}
+
+	# Protected: AI service
+	handle_path /researchai-ai/* {
+		forward_auth 127.0.0.1:8000 {
+			uri /auth/validate
+			copy_headers X-Auth-User X-Auth-Scope
+		}
+		reverse_proxy 127.0.0.1:8090
+	}
+
+	# Protected: Neo4j HTTP API
+	handle_path /researchai-neo4j/* {
+		forward_auth 127.0.0.1:8000 {
+			uri /auth/validate
+			copy_headers X-Auth-User X-Auth-Scope
+		}
+		reverse_proxy 127.0.0.1:7474
+	}
+
+	# Public: Frontend
 	handle_path /researchai/* {
 		reverse_proxy 127.0.0.1:3000
 	}

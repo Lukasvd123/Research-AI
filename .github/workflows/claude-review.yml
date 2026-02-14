@@ -31,26 +31,58 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          claude_args: "--model claude-sonnet-4-5-20250929 --allowedTools Bash(gh pr diff:*) Bash(gh pr view:*) Bash(gh pr comment:*) Bash(git diff:*) Bash(git log:*) Read"
+          claude_args: "--model claude-opus-4-6 --allowedTools Bash(gh pr diff:*) Bash(gh pr view:*) Bash(gh pr comment:*) Bash(git diff:*) Bash(git log:*) Read"
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
+            PR HEAD SHA: ${{ github.event.pull_request.head.sha }}
 
             You are a code reviewer for Research-AI.
 
-            IMPORTANT: Only review the CHANGED files in this PR. Do NOT read or review the entire codebase.
+            IMPORTANT: Only review the CHANGED files in this PR. Do NOT review the entire codebase.
 
             Steps:
             1. Run `gh pr diff ${{ github.event.pull_request.number }}` to see exactly what changed
             2. Run `gh pr view ${{ github.event.pull_request.number }}` to read the PR description
             3. Review ONLY the changes shown in the diff
-            4. If a change looks like it could break something, you may read related files for context — but do not review files that are not affected by the PR
+            4. If a change looks like it could break something, you may use the Read tool to check related files for context — but do not review or report issues on files that are not affected by the PR
             5. Post your review as a PR comment using `gh pr comment`
 
             Focus on:
             - Bugs, logic errors, and edge cases in the changed code
             - Security issues (XSS, injection, exposed secrets)
+            - Syntax errors, typos, and incorrect imports in changed files
+            - Spelling mistakes in strings, comments, and variable names within the diff
+            - Broken function calls (wrong arguments, missing parameters)
             - Whether the changes match the PR description
 
+            Rules:
+            - Every issue you report MUST correspond to code visible in the diff. Do NOT fabricate line numbers or file contents.
+            - When you reference a file, quote the actual code snippet so the author can find it.
+            - Do NOT report issues about code that is not in the diff.
+            - If the diff is small and clean, keep your review short.
+
             Keep the review concise. Only comment on things that actually matter.
+            Do NOT review the entire codebase — only the PR diff.
             If the PR is a trivial change (typo fix, string update, etc.), say so briefly and approve.
+
+            Format your review using GitHub-flavored markdown. When referencing specific lines, link to them using:
+            [`filename:line`](https://github.com/${{ github.repository }}/blob/${{ github.event.pull_request.head.sha }}/path/to/file#L42)
+
+            Structure your review as:
+
+            ## Code Review
+
+            **Summary:** <1-2 sentence overview>
+
+            ### Critical Issues
+            <issues that will break functionality or cause security vulnerabilities — or "None">
+
+            ### Warnings
+            <issues that could cause problems — or "None">
+
+            ### Suggestions
+            <improvements, spelling, style — or "None">
+
+            ---
+            *Reviewed by Claude — only changes in this PR were examined.*

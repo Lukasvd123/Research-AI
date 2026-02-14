@@ -1,0 +1,20 @@
+[Unit]
+Description=Research-AI Boot Auto-Deploy
+After=webhook.service network-online.target
+Wants=webhook.service
+ConditionPathExists=!/run/research-ai-boot-triggered
+
+[Service]
+Type=oneshot
+# Change to the user that owns the Research-AI repo checkout
+User=lvandee
+ExecStartPre=/bin/sleep 10
+ExecStart=/usr/bin/curl -sS -X POST http://127.0.0.1:9000/github-webhook \
+    -H "Content-Type: application/json" \
+    -H "X-GitHub-Event: push" \
+    -d '{"ref":"refs/heads/main","pusher":{"name":"boot-trigger"},"head_commit":{"message":"Boot auto-deploy","url":""}}'
+ExecStartPost=/usr/bin/touch /run/research-ai-boot-triggered
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

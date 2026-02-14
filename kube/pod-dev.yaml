@@ -20,6 +20,8 @@ spec:
       env:
         - name: PYTHONUNBUFFERED
           value: "1"
+        - name: PYTHONPATH
+          value: "/app:/repo"
       envFrom:
         - configMapRef:
             name: research-ai-env
@@ -28,6 +30,8 @@ spec:
       volumeMounts:
         - name: backend-src
           mountPath: /app
+        - name: shared-src
+          mountPath: /repo/shared
       command: ["bash", "-lc"]
       args:
         - |
@@ -76,6 +80,11 @@ spec:
     - name: backend-src
       hostPath:
         path: ./backend
+        type: Directory
+
+    - name: shared-src
+      hostPath:
+        path: ./shared
         type: Directory
 
     - name: frontend-src
