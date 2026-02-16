@@ -11,6 +11,22 @@ To set this up:
     cp kube/env.yaml.example kube/env.yaml
     ```
 2.  **Add credentials:** Open the newly created `kube/env.yaml` and fill in your specific values/credentials.
+Hier is een korte, overzichtelijke toevoeging voor je `README.md`.
+
+## Makefile Usage
+
+Use `make` to manage the application lifecycle.
+
+| Command | Description |
+| --- | --- |
+| **Development** |  |
+| `make up` | Builds images and starts the local Podman pod. |
+| `make down` | Stops the local pod. |
+| `make watch` | Tails logs for the whole pod (use `wapi` / `wui` for specific logs). |
+| `make labelSELinux` | Fixes SELinux context labels for volumes (only when developing on a Security-Enhanced Linux kernel). |
+| **Production** |  |
+| `make deploy` | Builds prod images and installs the Systemd Quadlet service. |
+| `make logs` | Tails the systemd journal for the service. |
 
 ## Gitignore Policy
 
