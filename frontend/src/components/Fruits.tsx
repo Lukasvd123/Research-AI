@@ -13,6 +13,17 @@ interface HealthStatus {
   fruit_count: number;
 }
 
+function describeError(error: any, fallback: string): string {
+  if (error?.response) {
+    return `${fallback} (${error.response.status}: ${error.response.data?.detail || error.response.statusText})`;
+  }
+  if (error?.request) {
+    const url = error.config?.baseURL || 'unknown';
+    return `${fallback} — cannot reach ${url} (network error or CORS blocked)`;
+  }
+  return `${fallback}: ${error?.message || 'unknown error'}`;
+}
+
 const FruitList = () => {
   const [fruits, setFruits] = useState<Fruit[]>([]);
   const [health, setHealth] = useState<HealthStatus | null>(null);
@@ -24,9 +35,19 @@ const FruitList = () => {
       const response = await api.get('/health');
       setHealth(response.data);
       setBackendError(null);
-    } catch (error) {
+    } catch (error: any) {
       setHealth(null);
-      setBackendError(getAuthError() || 'Cannot reach backend');
+      const authErr = getAuthError();
+      if (authErr) {
+        setBackendError(authErr);
+      } else if (error?.response) {
+        setBackendError(`Backend returned ${error.response.status}: ${error.response.data?.detail || error.response.statusText}`);
+      } else if (error?.request) {
+        const url = error.config?.baseURL || 'unknown';
+        setBackendError(`Cannot reach backend at ${url} — network error or CORS blocked`);
+      } else {
+        setBackendError(`Backend error: ${error?.message || 'unknown'}`);
+      }
     }
   };
 
@@ -36,9 +57,9 @@ const FruitList = () => {
       setFruits(response.data.fruits);
       setBackendError(null);
       setLastAction(`Fetched ${response.data.fruits.length} fruit(s) from backend`);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error fetching fruits", error);
-      setBackendError(getAuthError() || 'Failed to fetch fruits');
+      setBackendError(getAuthError() || describeError(error, 'Failed to fetch fruits'));
     }
   };
 
@@ -49,9 +70,9 @@ const FruitList = () => {
       setBackendError(null);
       fetchFruits();
       checkHealth();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error adding fruit", error);
-      setBackendError(getAuthError() || 'Failed to add fruit');
+      setBackendError(getAuthError() || describeError(error, 'Failed to add fruit'));
     }
   };
 
@@ -62,9 +83,9 @@ const FruitList = () => {
       setBackendError(null);
       fetchFruits();
       checkHealth();
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error clearing fruits", error);
-      setBackendError(getAuthError() || 'Failed to clear fruits');
+      setBackendError(getAuthError() || describeError(error, 'Failed to clear fruits'));
     }
   };
 
