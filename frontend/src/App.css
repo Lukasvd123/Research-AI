@@ -1,18 +1,89 @@
+/* Root container */
 #root {
-  max-width: 700px;
-  margin: 0 auto;
-  padding: 2rem;
+  width: 100%;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
   font-family: system-ui, -apple-system, sans-serif;
 }
 
-.App-header {
-  margin-bottom: 1.5rem;
+/* App container - full height layout */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
-.App-header h1 {
+/* Header */
+.app-header {
+  padding: 0.75rem 1.5rem;
+  background: #1a1a2e;
+  color: white;
+  flex-shrink: 0;
+}
+
+.app-header h1 {
   margin: 0;
-  font-size: 1.8rem;
-  color: #1a1a2e;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Main content - 3 column layout */
+.app-main {
+  display: grid;
+  grid-template-columns: 320px 1fr 300px;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Left panel - search and prompts */
+.left-panel {
+  background: #ffffff;
+  border-right: 1px solid #e5e7eb;
+  overflow-y: auto;
+}
+
+/* Middle panel - answer area */
+.middle-panel {
+  background: #f9fafb;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+/* Right panel - connections */
+.right-panel {
+  background: #ffffff;
+  border-left: 1px solid #e5e7eb;
+  overflow-y: auto;
+  padding: 1.5rem;
+}
+
+/* Placeholder styling for panels */
+.placeholder-panel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: #9ca3af;
+  font-style: italic;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .app-main {
+    grid-template-columns: 280px 1fr 250px;
+  }
+}
+
+@media (max-width: 768px) {
+  .app-main {
+    grid-template-columns: 1fr;
+  }
+  
+  .right-panel {
+    display: none;
+  }
 }
 
 .status-box {
