@@ -6,16 +6,24 @@ spec:
   containers:
     - name: api
       image: research-ai-backend:prod
+      env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: PYTHONPATH
+          value: "/app"
+      envFrom:
+        - configMapRef:
+            name: research-ai-env
       ports:
         - containerPort: 8000
           hostPort: 8000
           hostIP: 127.0.0.1
-      envFrom:
-        - configMapRef:
-            name: research-ai-env
 
     - name: frontend
       image: research-ai-frontend:prod
+      envFrom:
+        - configMapRef:
+            name: research-ai-env
       ports:
         - containerPort: 80
           hostPort: 3000
