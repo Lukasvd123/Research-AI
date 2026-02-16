@@ -11,7 +11,6 @@ To set this up:
     cp kube/env.yaml.example kube/env.yaml
     ```
 2.  **Add credentials:** Open the newly created `kube/env.yaml` and fill in your specific values/credentials.
-Hier is een korte, overzichtelijke toevoeging voor je `README.md`.
 
 ## Makefile Usage
 
