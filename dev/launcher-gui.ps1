@@ -1,15 +1,37 @@
-﻿# ============================================================================
+# ============================================================================
 # Research-AI Dev Launcher - WPF GUI
 # ============================================================================
-# Launched via: .\launcher.ps1 -GUI   or   run-dev-gui.bat
-# Uses WPF (built into Windows) - no external dependencies.
+#
+# PURPOSE:
+#   Graphical (WPF) front-end for the dev launcher. Provides buttons instead
+#   of a terminal menu. All shared logic (WSL helpers, log formatting,
+#   prerequisites) lives in launcher.ps1 which dot-sources this file.
+#
+# LAUNCHED VIA:
+#   .\launcher.ps1 -GUI   or   run-dev-gui.bat
+#
+# HOW IT WORKS:
+#   1. launcher.ps1 runs prerequisites, then dot-sources this file.
+#   2. This file defines the WPF window in XAML and wires up button handlers.
+#   3. A DispatcherTimer polls heartbeat + health every 60 seconds.
+#   4. On window close, containers are ALWAYS stopped (no "keep running").
+#
+# DEPENDENCIES:
+#   - PresentationFramework, PresentationCore, WindowsBase (built into Windows)
+#   - All functions from launcher.ps1 (Invoke-WslCapture, Format-LogLine, etc.)
+#
 # ============================================================================
 
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-# -- XAML Layout -------------------------------------------------------------
+# ============================================================================
+# XAML LAYOUT
+# ============================================================================
+# Defines the WPF window: status indicators, action buttons, log output, URLs.
+# Uses a dark color scheme (Catppuccin Mocha palette).
+# ============================================================================
 
 [xml]$xaml = @"
 <Window
@@ -43,7 +65,6 @@ Add-Type -AssemblyName WindowsBase
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -53,7 +74,7 @@ Add-Type -AssemblyName WindowsBase
                    FontSize="22" FontWeight="Bold" Margin="0,0,0,8"
                    Foreground="#89b4fa"/>
 
-        <!-- Status indicators -->
+        <!-- Status indicators (colored dots) -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,0,0,12">
             <TextBlock Text="WSL+Podman    " FontWeight="SemiBold"/>
             <Ellipse Name="indHeartbeat" Width="10" Height="10" Fill="#6c7086" Margin="8,0,4,0" VerticalAlignment="Center"/>
@@ -66,29 +87,17 @@ Add-Type -AssemblyName WindowsBase
             <TextBlock Text="Backend" FontSize="11"/>
         </StackPanel>
 
-        <!-- Launch buttons -->
-        <WrapPanel Grid.Row="2" Margin="0,0,0,8">
-            <Button Name="btnFullStack" Content="Full Stack"/>
-            <Button Name="btnResume" Content="Resume"/>
-            <Button Name="btnStopAll" Content="Stop All" />
-            <Button Name="btnBrowser" Content="Open Browser"/>
-            <CheckBox Name="chkIndefinite" Content="Run indefinitely (survive after close)"
-                      Foreground="#cdd6f4" Margin="12,0,0,0" VerticalAlignment="Center"
-                      FontFamily="Segoe UI" FontSize="12"/>
-        </WrapPanel>
-
         <!-- Action buttons -->
-        <WrapPanel Grid.Row="3" Margin="0,0,0,8">
-            <Button Name="btnRestartFE" Content="Restart FE" FontSize="11"/>
-            <Button Name="btnRestartBE" Content="Restart BE" FontSize="11"/>
+        <WrapPanel Grid.Row="2" Margin="0,0,0,8">
+            <Button Name="btnFullStack" Content="Start Full Stack"/>
+            <Button Name="btnStopAll" Content="Stop All"/>
             <Button Name="btnRebuild" Content="Rebuild All" FontSize="11"/>
             <Button Name="btnHealthCheck" Content="Health Check" FontSize="11"/>
-            <Button Name="btnWatchBE" Content="Watch BE: OFF" FontSize="11"/>
-            <Button Name="btnWatchFE" Content="Watch FE: OFF" FontSize="11"/>
+            <Button Name="btnBrowser" Content="Open Browser"/>
         </WrapPanel>
 
-        <!-- Log output (RichTextBox for colored log lines) -->
-        <RichTextBox Grid.Row="4" Name="txtLog"
+        <!-- Log output (colored rich text) -->
+        <RichTextBox Grid.Row="3" Name="txtLog"
                      IsReadOnly="True"
                      VerticalScrollBarVisibility="Auto"
                      HorizontalScrollBarVisibility="Auto"
@@ -101,8 +110,8 @@ Add-Type -AssemblyName WindowsBase
             <FlowDocument Name="logDoc" PageWidth="5000"/>
         </RichTextBox>
 
-        <!-- URLs bar -->
-        <StackPanel Grid.Row="5" Orientation="Horizontal">
+        <!-- URL bar -->
+        <StackPanel Grid.Row="4" Orientation="Horizontal">
             <TextBlock Text="App: " FontSize="11" Foreground="#a6adc8"/>
             <TextBlock Name="txtAppUrl" Text="" FontSize="11" Foreground="#89b4fa"
                        Cursor="Hand" TextDecorations="Underline"/>
@@ -117,32 +126,44 @@ Add-Type -AssemblyName WindowsBase
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $window = [Windows.Markup.XamlReader]::Load($reader)
 
-# -- Bind UI Elements --------------------------------------------------------
+# ============================================================================
+# UI ELEMENT BINDING
+# ============================================================================
+# Find all named elements from the XAML and store them in a lookup table.
+# ============================================================================
 
 $ui = @{}
 @(
     "txtLog", "logDoc", "txtAppUrl", "txtApiUrl",
     "indHeartbeat", "indCaddy", "indFrontend", "indBackend",
-    "btnFullStack", "btnResume", "btnStopAll", "btnBrowser",
-    "btnRestartFE", "btnRestartBE", "btnRebuild",
-    "btnHealthCheck", "btnWatchBE", "btnWatchFE",
-    "chkIndefinite"
+    "btnFullStack", "btnStopAll", "btnBrowser",
+    "btnRebuild", "btnHealthCheck"
 ) | ForEach-Object { $ui[$_] = $window.FindName($_) }
 
+# Set URL labels
 $cfg = $script:Config
 $ui.txtAppUrl.Text = "http://localhost:$($cfg.CaddyPort)/researchai/"
 $ui.txtApiUrl.Text = "http://localhost:$($cfg.CaddyPort)/researchai-api/health"
 
-# -- Color map for log levels ------------------------------------------------
+# ============================================================================
+# GUI LOG HELPERS
+# ============================================================================
+# Append-FormattedLog: Formats a raw WSL log line (strip ANSI, parse JSON,
+#   map container IDs) and appends it color-coded to the RichTextBox.
+#
+# Append-PlainLog: Appends a plain message (for status updates like
+#   ">>> Starting full stack...") in a specified color.
+#
+# Both use Dispatcher.Invoke because WPF UI elements can only be modified
+# from the UI thread, but log lines may arrive from background threads.
+# ============================================================================
 
 $script:GuiLogColors = @{
-    "error" = "#f38ba8"
-    "warn"  = "#f9e2af"
-    "debug" = "#6c7086"
-    "info"  = "#a6adc8"
+    "error" = "#f38ba8"   # Red
+    "warn"  = "#f9e2af"   # Yellow
+    "debug" = "#6c7086"   # Gray
+    "info"  = "#a6adc8"   # Light gray
 }
-
-# -- GUI helpers -------------------------------------------------------------
 
 function Append-FormattedLog {
     param([string]$RawText)
@@ -187,6 +208,12 @@ function Append-PlainLog {
     Write-Log $Text -Silent
 }
 
+# ============================================================================
+# STATUS INDICATOR HELPERS
+# ============================================================================
+# Color dots: green=#a6e3a1, red=#f38ba8, grey=#6c7086, yellow=#f9e2af
+# ============================================================================
+
 function Set-Indicator {
     param([string]$Name, [string]$Color)
     $el = $ui["ind$Name"]
@@ -197,19 +224,11 @@ function Set-Indicator {
     }
 }
 
-function Set-ButtonsEnabled {
-    param([bool]$Enabled)
-    foreach ($key in $ui.Keys) {
-        if ($key -like "btn*") {
-            $ui[$key].IsEnabled = $Enabled
-        }
-    }
-}
-
-# green=#a6e3a1, red=#f38ba8, grey=#6c7086, yellow=#f9e2af
+# Query podman for each container's running state and update the dots
 function Update-Indicators {
     $podName = $cfg.PodName
     $result = Invoke-WslCapture "for c in surf-heartbeat caddy frontend api; do r=`$(podman inspect --format '{{.State.Running}}' '$podName-'`$c 2>/dev/null || echo false); echo `$c=`$r; done"
+
     $states = @{}
     foreach ($ln in $result) {
         if ($ln -match '^(\S+)=(.+)$') {
@@ -217,6 +236,7 @@ function Update-Indicators {
         }
     }
 
+    # Map container names to indicator element names
     $nameMap = @{
         "surf-heartbeat" = "Heartbeat"
         "caddy"          = "Caddy"
@@ -225,51 +245,69 @@ function Update-Indicators {
     }
 
     foreach ($key in $nameMap.Keys) {
-        $running = $states[$key]
-        if ($running -match "true") {
-            Set-Indicator $nameMap[$key] "#a6e3a1"
+        if ($states[$key] -match "true") {
+            Set-Indicator $nameMap[$key] "#a6e3a1"   # Green
         } else {
-            Set-Indicator $nameMap[$key] "#6c7086"
+            Set-Indicator $nameMap[$key] "#6c7086"   # Gray
         }
     }
 }
 
+# ============================================================================
+# MAKE RUNNER (GUI version)
+# ============================================================================
+# Same as Invoke-Make but routes output to the GUI log panel instead of the
+# console.
+# ============================================================================
+
 function Invoke-MakeGui {
     param([string]$Target)
     $wslPath = $script:Config.WslPath
-    $cmd = "cd '$wslPath' && make $Target 2>&1"
 
-    $exitCode = Invoke-WslStream -Command $cmd -OnLine {
-        param($line)
-        Append-FormattedLog $line
+    try {
+        $exitCode = Invoke-WslStream -Command "cd '$wslPath' && make $Target 2>&1" -OnLine {
+            param($line)
+            Append-FormattedLog $line
+        }
+    } catch {
+        # WSL process failed to start (e.g., WSL crashed, OOM, etc.)
+        Write-Log "[ERROR] WSL command failed: $_"
+        Write-Log "[ERROR] Stack: $($_.ScriptStackTrace)" -Silent
+        Append-PlainLog ">>> ERROR: WSL command failed: $_" -Color "#f38ba8"
+        $exitCode = 1
+    }
+
+    if ($exitCode -ne 0) {
+        Write-Log "[ERROR] make $Target failed (exit code $exitCode)"
+        Append-PlainLog ">>> 'make $Target' failed (exit code $exitCode)" -Color "#f38ba8"
+        Append-PlainLog ">>> Check the log output above. Common causes:" -Color "#f9e2af"
+        Append-PlainLog ">>>   - Port in use, podman not running, missing env vars" -Color "#f9e2af"
     }
 
     return $exitCode
 }
 
-# -- Button handlers ---------------------------------------------------------
+# ============================================================================
+# BUTTON HANDLERS
+# ============================================================================
 
 $ui.btnFullStack.Add_Click({
     Append-PlainLog ">>> Starting full stack (make dev)..."
-    Invoke-MakeGui "dev"
+    $exitCode = Invoke-MakeGui "dev"
     Start-Sleep -Seconds 3
     Update-ContainerIdMap
     Update-Indicators
-    Append-PlainLog ">>> Full stack started."
-})
 
-$ui.btnResume.Add_Click({
-    Append-PlainLog ">>> Resuming pod (make resume)..."
-    Invoke-MakeGui "resume"
-    Start-Sleep -Seconds 2
-    Update-ContainerIdMap
-    Update-Indicators
-    Append-PlainLog ">>> Resume complete."
+    if ($exitCode -ne 0) {
+        Append-PlainLog ">>> ERROR: make dev failed (exit code $exitCode)" -Color "#f38ba8"
+        Append-PlainLog ">>> Try running 'wsl bash -c ""cd $($script:Config.WslPath) && make dev""' manually to see full output." -Color "#f9e2af"
+    } else {
+        Append-PlainLog ">>> Full stack started."
+    }
 })
 
 $ui.btnStopAll.Add_Click({
     Append-PlainLog ">>> Stopping all (make dev-down)..."
-    Stop-AllWatchers
     Stop-WslHeartbeats
     Invoke-MakeGui "dev-down"
     Update-Indicators
@@ -280,18 +318,6 @@ $ui.btnBrowser.Add_Click({
     $url = "http://localhost:$($cfg.CaddyPort)/researchai/"
     Start-Process $url
     Append-PlainLog ">>> Opened browser: $url"
-})
-
-$ui.btnRestartFE.Add_Click({
-    Invoke-MakeGui "restart-ui"
-    Append-PlainLog ">>> Frontend restarted."
-    Update-Indicators
-})
-
-$ui.btnRestartBE.Add_Click({
-    Invoke-MakeGui "restart-api"
-    Append-PlainLog ">>> Backend restarted."
-    Update-Indicators
 })
 
 $ui.btnRebuild.Add_Click({
@@ -305,55 +331,35 @@ $ui.btnRebuild.Add_Click({
 $ui.btnHealthCheck.Add_Click({
     Append-PlainLog ">>> Running health check..."
     $result = Test-ServiceHealth
-    if ($result) { Append-PlainLog ">>> All healthy!" }
-    else { Append-PlainLog ">>> Some checks failed." -Color "#f38ba8" }
-})
-
-$ui.btnWatchBE.Add_Click({
-    if ($script:WatcherJobs.ContainsKey("backend")) {
-        Stop-FileWatcher -Name "backend"
-        $ui.btnWatchBE.Content = "Watch BE: OFF"
-        Append-PlainLog ">>> Backend auto-reload disabled."
+    if ($result) {
+        Append-PlainLog ">>> All healthy!"
     } else {
-        Start-FileWatcher -Name "backend" `
-            -WatchPath (Join-Path $cfg.ScriptDir "backend") `
-            -Extensions @("*.py") `
-            -MakeTarget "restart-api"
-        $ui.btnWatchBE.Content = "Watch BE: ON"
-        Append-PlainLog ">>> Backend auto-reload enabled."
+        Append-PlainLog ">>> Some checks failed. Services may still be starting." -Color "#f38ba8"
     }
 })
 
-$ui.btnWatchFE.Add_Click({
-    if ($script:WatcherJobs.ContainsKey("frontend")) {
-        Stop-FileWatcher -Name "frontend"
-        $ui.btnWatchFE.Content = "Watch FE: OFF"
-        Append-PlainLog ">>> Frontend auto-reload disabled."
-    } else {
-        Start-FileWatcher -Name "frontend" `
-            -WatchPath (Join-Path $cfg.ScriptDir "frontend") `
-            -Extensions @("*.ts", "*.tsx", "*.css", "*.html") `
-            -MakeTarget "restart-ui"
-        $ui.btnWatchFE.Content = "Watch FE: ON"
-        Append-PlainLog ">>> Frontend auto-reload enabled."
-    }
-})
-
-# clickable URLs
+# Clickable URL labels
 $ui.txtAppUrl.Add_MouseLeftButtonUp({ Start-Process $ui.txtAppUrl.Text })
 $ui.txtApiUrl.Add_MouseLeftButtonUp({ Start-Process $ui.txtApiUrl.Text })
 
-# -- Heartbeat monitor (GUI version) ----------------------------------------
+# ============================================================================
+# HEARTBEAT MONITOR (GUI version)
+# ============================================================================
+# Uses WPF DispatcherTimer instead of System.Timers.Timer because it fires
+# on the UI thread, making it safe to update indicators directly.
+# ============================================================================
 
 $guiHeartbeatTimer = New-Object System.Windows.Threading.DispatcherTimer
 $guiHeartbeatTimer.Interval = [TimeSpan]::FromSeconds(35)
 $guiHeartbeatTimer.Add_Tick({
+    # Slow down to 60s after the first tick
     if ($guiHeartbeatTimer.Interval.TotalSeconds -lt 60) {
         $guiHeartbeatTimer.Interval = [TimeSpan]::FromSeconds(60)
     }
 
-    $port = $cfg.CaddyPort
+    $port    = $cfg.CaddyPort
     $ctrName = "$($cfg.PodName)-surf-heartbeat"
+
     $result = Invoke-WslCapture "echo HB=`$(podman inspect --format '{{.State.Running}}' $ctrName 2>/dev/null || echo false); echo FE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai/' 2>/dev/null); echo BE=`$(curl -sf -o /dev/null -w '%{http_code}' 'http://localhost:$port/researchai-api/health' 2>/dev/null)"
 
     $hbOk = $false; $feCode = "000"; $beCode = "000"
@@ -363,31 +369,33 @@ $guiHeartbeatTimer.Add_Tick({
         if ($ln -match '^BE=(\d+)') { $beCode = $Matches[1] }
     }
 
+    # Heartbeat indicator: green -> yellow (1-2 fails) -> red (3+ fails)
     if (-not $hbOk) {
         $script:HeartbeatFailCount++
         if ($script:HeartbeatFailCount -ge 3) {
             $script:HeartbeatWarning = $true
-            Set-Indicator "Heartbeat" "#f38ba8"
+            Set-Indicator "Heartbeat" "#f38ba8"    # Red
         } else {
-            Set-Indicator "Heartbeat" "#f9e2af"
+            Set-Indicator "Heartbeat" "#f9e2af"    # Yellow
         }
     } else {
         $script:HeartbeatFailCount = 0
         $script:HeartbeatWarning = $false
-        Set-Indicator "Heartbeat" "#a6e3a1"
+        Set-Indicator "Heartbeat" "#a6e3a1"        # Green
     }
 
-    $feOk = "$feCode" -match "^[23]"
-    $beOk = "$beCode" -match "^[23]"
-    $script:HealthFrontend  = if ($feOk) { "OK" } else { "DOWN" }
-    $script:HealthBackend   = if ($beOk) { "OK" } else { "DOWN" }
+    $script:HealthFrontend  = if ("$feCode" -match "^[23]") { "OK" } else { "DOWN" }
+    $script:HealthBackend   = if ("$beCode" -match "^[23]") { "OK" } else { "DOWN" }
     $script:HealthLastCheck = Get-Date -Format "HH:mm:ss"
 
     Update-Indicators
 })
 
-# -- Initialize and show ----------------------------------------------------
+# ============================================================================
+# INITIALIZE AND SHOW WINDOW
+# ============================================================================
 
+# Route Write-Log output to the GUI log panel
 $script:LogCallback = {
     param([string]$Text)
     $ui.txtLog.Dispatcher.Invoke([action]{
@@ -405,33 +413,38 @@ $script:LogCallback = {
     })
 }
 
+# Run prerequisite checks and show results in the log panel
 Append-PlainLog "Checking prerequisites..."
 try {
     Ensure-Prerequisites
     Append-PlainLog "All prerequisites satisfied - ready to launch."
 } catch {
     Append-PlainLog "ERROR: $_" -Color "#f38ba8"
-    Append-PlainLog "Fix the issue above and restart the launcher."
+    Append-PlainLog "Fix the issue above and restart the launcher." -Color "#f9e2af"
 }
 
 Update-Indicators
 $guiHeartbeatTimer.Start()
 
-# cleanup on window close
+# ============================================================================
+# WINDOW CLOSE HANDLER
+# ============================================================================
+# Always stops containers when the window closes. No "keep running" option.
+# ============================================================================
+
 $window.Add_Closing({
     $guiHeartbeatTimer.Stop()
-    Stop-AllWatchers
-    $isIndefinite = $ui.chkIndefinite.IsChecked
-    if (-not $isIndefinite -and $script:Config.WslPath) {
-        Write-Log "Stopping containers and heartbeat processes..."
+
+    if ($script:Config.WslPath) {
+        Write-Log "Window closing - stopping containers..."
         Stop-WslHeartbeats
         $wslPath = $script:Config.WslPath
         Invoke-WslCapture "cd '$wslPath' && make dev-down 2>&1" | Out-Null
         Write-Log "Containers stopped."
-    } elseif ($isIndefinite) {
-        Write-Log "Indefinite mode - containers will keep running."
     }
-    Write-Log "Window closing."
+
+    Write-Log "Window closed."
 })
 
+# Show the window (blocks until closed)
 $window.ShowDialog() | Out-Null
