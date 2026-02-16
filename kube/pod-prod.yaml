@@ -23,6 +23,15 @@ spec:
         - name: caddy-config
           mountPath: /config
 
+    - name: ricgraph
+      image: ghcr.io/utrechtuniversity/ricgraph:latest
+      ports:
+        - containerPort: 3030 # Web Explorer
+      volumeMounts:
+        # runs its own neo4j database
+        - name: ricgraph-data
+          mountPath: /var/lib/neo4j/data
+
   volumes:
     - name: caddy-data
       persistentVolumeClaim:
@@ -30,6 +39,9 @@ spec:
     - name: caddy-config
       persistentVolumeClaim:
         claimName: caddy-config-pvc
+    - name: ricgraph-data
+      persistentVolumeClaim:
+        claimName: ricgraph-data-pvc
 
 ---
 apiVersion: v1
@@ -54,3 +66,15 @@ spec:
   resources:
     requests:
       storage: 1Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ricgraph-data-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Gi

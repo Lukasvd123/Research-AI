@@ -3,6 +3,10 @@ set -e
 
 log() { echo "$(date '+%H:%M:%S') - $1"; }
 
+# Install dependencies
+log "Installing curl and jq..."
+apk add --no-cache curl jq >/dev/null 2>&1
+
 # Login
 log "Authenticating..."
 TOKEN=$(curl -s -X POST "https://van-dee.nl/api_login.php" \
@@ -20,7 +24,10 @@ until [ "$(curl -s -H "X-API-Token: $TOKEN" "https://van-dee.nl/api_surf.php?act
   sleep 10
 done
 
-log "Server is running. Starting heartbeat (5m interval)."
+log "Server is running. Sending first heartbeat in 30s..."
+sleep 30
+curl -s -X POST "https://van-dee.nl/api_surf.php?action=heartbeat" -H "X-API-Token: $TOKEN"
+log "Initial heartbeat sent. Continuing with 5m interval."
 
 # Heartbeat
 while sleep 300; do
